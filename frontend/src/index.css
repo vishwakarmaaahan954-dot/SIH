@@ -1,0 +1,143 @@
+/* APAAR Verify: "security paper" theme. Tailwind (CDN) supplies utilities; this file adds
+   tokens, motion and the handful of bespoke components (letterhead, seal, slip, ledger, chain). */
+
+:root {
+  --paper: #e7e9f4;
+  --sheet: #f6f7fb;
+  --ink: #25215f;
+  --ink-2: #57548f;
+  --rule: #c3c6e0;
+  --green: #1e7a4c;
+  --saffron: #c96a0a;
+  --brick: #a32a1f;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2 { font-stretch: 115%; letter-spacing: -0.01em; }
+h3 { font-stretch: 106%; }
+:focus-visible { outline: 2px solid var(--saffron); outline-offset: 2px; }
+button:disabled { cursor: not-allowed; }
+
+/* ---------- Letterhead ---------- */
+.letterhead { background: var(--sheet); border-bottom: 1px solid var(--rule); }
+.brand { font-size: 1.6rem; line-height: 1.1; font-weight: 800; font-stretch: 122%; letter-spacing: -0.015em; color: var(--ink); }
+.mock-tag { font-size: 0.72rem; font-weight: 600; color: var(--saffron); border: 1px dashed var(--saffron); border-radius: 3px; padding: 0.05rem 0.4rem; }
+.seal { color: var(--ink); flex: none; }
+.seal-path, .seal-check { fill: none; stroke: currentColor; stroke-width: 0.7px; vector-effect: non-scaling-stroke; }
+.seal-check { stroke: var(--green); stroke-width: 2.4px; stroke-linecap: round; stroke-linejoin: round; }
+.seal--draw .seal-path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.8s var(--ease) forwards; animation-delay: calc(var(--i) * 110ms); }
+.seal--draw .seal-check { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 0.6s var(--ease) 1.4s forwards; }
+.seal-disc { fill: var(--sheet); }
+
+.session { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.session label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--ink-2); font-weight: 500; }
+.session select {
+  font: inherit; font-size: 0.85rem; font-weight: 600; color: var(--ink);
+  background: #fff; border: 1px solid var(--rule); border-radius: 4px; padding: 0.4rem 0.6rem; cursor: pointer; max-width: 240px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.session select:hover { border-color: var(--ink-2); }
+.session select:focus-visible { outline: none; border-color: var(--ink); box-shadow: 0 0 0 3px rgba(62, 58, 154, 0.2); }
+
+/* ---------- Tab strip with sliding ink underline ---------- */
+.tabbar { background: var(--sheet); border-bottom: 1px solid var(--rule); position: sticky; top: 0; z-index: 20; }
+.tabs { position: relative; display: flex; overflow-x: auto; scrollbar-width: none; gap: 0.25rem; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs::after {
+  content: ''; position: absolute; left: 0; bottom: 0; height: 3px; width: var(--iw, 0px); background: var(--ink);
+  transform: translateX(var(--ix, 0px)); transition: transform 0.4s var(--ease), width 0.4s var(--ease);
+}
+.nav-tab { flex: none; padding: 0.85rem 0.9rem; font-size: 0.9rem; font-weight: 500; color: var(--ink-2); transition: color 0.15s; white-space: nowrap; }
+.nav-tab:hover { color: var(--ink); }
+.nav-tab.is-active { color: var(--ink); font-weight: 700; }
+
+/* ---------- View transition ---------- */
+.view-enter { animation: view-in 0.32s var(--ease) both; }
+@keyframes view-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes stamp { 0% { opacity: 0; transform: scale(1.7) rotate(-9deg); } 55% { opacity: 1; transform: scale(0.96) rotate(-3deg); } 100% { opacity: 1; transform: scale(1) rotate(-3deg); } }
+@keyframes link-on { from { background: var(--rule); } to { background: var(--c, var(--green)); } }
+@keyframes node-on { 0% { transform: scale(0.6); } 60% { transform: scale(1.35); } 100% { transform: scale(1); } }
+
+/* ---------- ID slip (dashboard header) ---------- */
+.slip { position: relative; overflow: hidden; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 2px 0 rgba(37, 33, 95, 0.09); }
+.slip-mark { position: absolute; right: -90px; top: 50%; transform: translateY(-50%); color: var(--ink); opacity: 0.1; pointer-events: none; }
+.slip-name { font-size: clamp(1.7rem, 3.4vw, 2.5rem); line-height: 1.05; font-weight: 800; font-stretch: 118%; letter-spacing: -0.02em; }
+.slip dl dt { font-size: 0.78rem; color: var(--ink-2); font-weight: 500; }
+.slip dl dd { font-size: 0.98rem; font-weight: 600; margin-top: 0.1rem; }
+.stamp-tag {
+  display: inline-block; font-size: 0.75rem; font-weight: 800; font-stretch: 112%; letter-spacing: 0.02em;
+  padding: 0.12rem 0.55rem; border: 2px solid currentColor; border-radius: 4px; transform: rotate(-3deg);
+  color: var(--saffron); animation: stamp 0.55s var(--ease) 0.15s both;
+}
+.stamp-tag.is-ok { color: var(--green); }
+.stamp-tag.is-bad { color: var(--brick); }
+
+/* ---------- Ledger strip (metrics) ---------- */
+.ledger { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; display: grid; box-shadow: 0 2px 0 rgba(37, 33, 95, 0.09); }
+@media (min-width: 768px) { .ledger { grid-template-columns: 1.4fr 1fr 1fr; } .ledger > * + * { border-left: 1px solid var(--rule); } }
+@media (max-width: 767px) { .ledger > * + * { border-top: 1px solid var(--rule); } }
+.ledger-cell { padding: 1.25rem 1.5rem; }
+.ledger-label { font-size: 0.85rem; font-weight: 600; color: var(--ink-2); }
+.ledger-num { font-size: clamp(2.4rem, 4.4vw, 3.4rem); line-height: 1; font-weight: 800; font-stretch: 120%; letter-spacing: -0.03em; margin-top: 0.5rem; }
+.ledger-num small { font-size: 0.4em; font-weight: 600; font-stretch: 100%; letter-spacing: 0; color: var(--ink-2); margin-left: 0.3rem; }
+.gauge { position: relative; height: 10px; margin-top: 1rem; background: #dfe2f1; border-radius: 2px; }
+.gauge-fill { height: 100%; border-radius: 2px; transform-origin: left; animation: grow-x 1.1s var(--ease) 0.2s both; }
+.gauge-cut { position: absolute; left: 75%; top: -5px; bottom: -5px; width: 2px; background: var(--ink); }
+.gauge-cut::after { content: '75% cutoff'; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; font-size: 0.68rem; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+
+/* ---------- QR ticket with countdown ring ---------- */
+.ticket { position: relative; background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 1.5rem 1.25rem 1.25rem; box-shadow: 0 2px 0 rgba(37, 33, 95, 0.09); overflow: hidden; }
+.ticket-mark { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); color: var(--ink); opacity: 0.07; pointer-events: none; }
+.qr-wrap { position: relative; width: 276px; height: 276px; margin: 0 auto; display: grid; place-items: center; }
+.qr-ring { position: absolute; inset: 0; width: 100%; height: 100%; }
+.qr-ring rect { fill: none; stroke-width: 1.6; }
+.qr-ring .track { stroke: #dfe2f1; }
+.qr-ring .run { stroke: var(--ink); transition: stroke-dashoffset 1s linear, stroke 0.3s; }
+.qr-ring .run.is-low { stroke: var(--brick); }
+.qr-face { position: relative; background: #fff; padding: 10px; border: 1px solid var(--rule); border-radius: 4px; }
+.qr-count { font-weight: 800; font-stretch: 118%; font-size: 1.3rem; }
+
+/* ---------- Result card (scan / chain status) ---------- */
+.verdict { position: relative; border: 1px solid; border-left-width: 5px; border-radius: 6px; padding: 1rem 1.25rem; }
+.verdict.is-ok { background: #eaf5ee; border-color: #77bc95; border-left-color: var(--green); color: #134f34; }
+.verdict.is-bad { background: #fbecea; border-color: #e17a70; border-left-color: var(--brick); color: #6b1f18; }
+.verdict-stamp { position: absolute; right: 1rem; top: 0.9rem; font-size: 0.8rem; font-weight: 800; font-stretch: 115%; border: 2px solid currentColor; border-radius: 4px; padding: 0.1rem 0.5rem; transform: rotate(-3deg); animation: stamp 0.5s var(--ease) 0.1s both; opacity: 0.9; }
+
+/* ---------- Audit chain rail ---------- */
+.chain-cell { position: relative; width: 36px; padding: 0 !important; }
+.chain-link { position: absolute; left: 50%; width: 3px; margin-left: -1.5px; top: 0; bottom: 0; background: var(--rule); }
+tr:first-child .chain-link { top: 50%; }
+tr:last-child .chain-link { bottom: 50%; }
+.chain-node { position: absolute; left: 50%; top: 50%; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-radius: 50%; background: var(--sheet); border: 2px solid var(--ink-2); }
+.chain-ok .chain-link { --c: var(--green); animation: link-on 0.35s ease forwards; animation-delay: calc(var(--i) * 70ms); }
+.chain-ok .chain-node { border-color: var(--green); background: var(--green); animation: node-on 0.4s var(--ease) both; animation-delay: calc(var(--i) * 70ms); }
+.chain-bad .chain-link.is-broken { --c: var(--brick); background: var(--brick); }
+.chain-bad .chain-node.is-broken { border-color: var(--brick); background: var(--brick); animation: node-on 0.5s var(--ease) both; }
+.chain-bad .is-valid .chain-link { background: var(--green); }
+.chain-bad .is-valid .chain-node { border-color: var(--green); background: var(--green); }
+
+/* ---------- Table polish ---------- */
+.mini-gauge { width: 72px; height: 4px; margin-top: 4px; background: #dfe2f1; border-radius: 1px; overflow: hidden; }
+.mini-gauge i { display: block; height: 100%; background: var(--ink); transform-origin: left; animation: grow-x 0.9s var(--ease) 0.1s both; }
+.mini-gauge i.is-low { background: #e5921e; }
+table th { font-weight: 600; }
+tbody tr { transition: background-color 0.15s; }
+
+/* ---------- Footer ---------- */
+.colophon { border-top: 1px solid var(--rule); background: var(--sheet); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-delay: 0ms !important; transition-duration: 0.001ms !important; }
+}
