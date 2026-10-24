@@ -613,17 +613,46 @@ export default function App() {
   // Slide the ink underline under the active tab.
   const tabsRef = useRef(null);
   useLayoutEffect(() => {
-    const place = () => {
+    const place = (scroll) => {
       const el = tabsRef.current;
       const a = el && el.querySelector('[data-active="true"]');
       if (!a) return;
       el.style.setProperty("--ix", a.offsetLeft + "px");
       el.style.setProperty("--iw", a.offsetWidth + "px");
+      if (scroll && el.scrollWidth > el.clientWidth) {
+        const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        el.scrollTo({ left: Math.max(0, a.offsetLeft - (el.clientWidth - a.offsetWidth) / 2), behavior: calm ? "auto" : "smooth" });
+      }
     };
-    place();
-    window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
+    const onResize = () => place(false);
+    place(true);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, [activeTab, role, grievancesList.length, requestsList]);
+
+  // Phones: label each table cell with its column header so rows can render as cards (see table.stack in index.css).
+  const mainRef = useRef(null);
+  useEffect(() => {
+    const root = mainRef.current;
+    if (!root) return;
+    let raf = 0;
+    const label = () => {
+      raf = 0;
+      root.querySelectorAll("table.stack").forEach((t) => {
+        const heads = [...t.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+        t.querySelectorAll("tbody tr").forEach((tr) =>
+          [...tr.children].forEach((td, i) => {
+            if (heads[i] && td.getAttribute("data-label") !== heads[i]) td.setAttribute("data-label", heads[i]);
+          })
+        );
+      });
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(label); };
+    schedule();
+    const mo = new MutationObserver(schedule);
+    mo.observe(root, { childList: true, subtree: true });
+    return () => { mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
 
   const attPct = studentDetails?.attendance?.attendance_pct ?? 0;
 
@@ -637,15 +666,13 @@ export default function App() {
     <div className="min-h-screen flex flex-col font-sans text-slate-800">
       {/* Letterhead */}
       <header className="letterhead">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5 min-w-0">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-3.5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <div className="brand-block flex items-center gap-3 sm:gap-3.5">
             <Guilloche size={48} lines={7} draw check className="flex-shrink-0" />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="brand text-lg font-bold text-slate-900 tracking-tight">APAAR Verify</h1>
-                <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded font-mono font-medium">
-                  🟢 Supabase Live
-                </span>
+                <span className="live-tag">Supabase live</span>
               </div>
               <p className="text-xs text-slate-500 font-medium truncate hidden md:block">
                 AICTE Student Verification & Compliance Gateway (SIH 2026)
@@ -654,20 +681,20 @@ export default function App() {
           </div>
 
           {/* Controls: Mode Toggle + Conditional Persona / Supabase Controls */}
-          <div className="flex items-center gap-2.5 flex-shrink-0">
+          <div className="session-controls">
             {/* Mode Switcher: Test Persona vs Supabase Auth ID */}
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+            <div className="seg bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
               <button
                 type="button"
                 onClick={() => setIdentityMode("persona")}
-                className={`px-3 py-1.5 rounded font-semibold transition ${identityMode === "persona" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                className={`flex-1 px-3 py-2 rounded font-semibold transition ${identityMode === "persona" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
               >
                 Test Persona
               </button>
               <button
                 type="button"
                 onClick={() => setIdentityMode("supabase")}
-                className={`px-3 py-1.5 rounded font-semibold transition ${identityMode === "supabase" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                className={`flex-1 px-3 py-2 rounded font-semibold transition ${identityMode === "supabase" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
               >
                 Supabase Auth ID
               </button>
@@ -675,7 +702,7 @@ export default function App() {
 
             {/* ON TEST PERSONA MODE: Inline Active Role & Persona Selects (Login button is HIDDEN) */}
             {identityMode === "persona" && (
-              <div className="flex items-center gap-2">
+              <div className="pick">
                 <select
                   value={role}
                   onChange={(e) => {
@@ -709,9 +736,9 @@ export default function App() {
 
             {/* ON SUPABASE AUTH MODE: Test Persona & Active Role are HIDDEN. Show LOGIN / Session status */}
             {identityMode === "supabase" && (
-              <div className="flex items-center gap-2">
+              <div className="auth-slot">
                 {authSession?.user ? (
-                  <div className="flex items-center gap-2 bg-slate-100 border border-slate-300 px-3 py-1 rounded text-xs">
+                  <div className="flex flex-wrap items-center gap-2 bg-slate-100 border border-slate-300 px-3 py-1.5 rounded text-xs">
                     <span className="font-semibold text-slate-800 bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px]">
                       {userProfile?.role ? userProfile.role.toUpperCase().replace('_', ' ') : role}
                     </span>
@@ -730,7 +757,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setIsAuthModalOpen(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-4 py-1.5 rounded shadow-sm flex items-center gap-1.5 transition"
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-4 py-2 rounded shadow-sm flex items-center justify-center gap-1.5 w-full sm:w-auto transition"
                   >
                     <IconLock />
                     <span>LOGIN</span>
@@ -744,8 +771,8 @@ export default function App() {
 
       {/* LOGIN Modal */}
       {isAuthModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-md w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="modal-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
+          <div className="modal-sheet bg-white rounded-t-2xl sm:rounded-xl shadow-2xl border border-slate-200 max-w-md w-full p-5 sm:p-6 space-y-4 max-h-[92vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
                 <Guilloche size={32} lines={5} />
@@ -992,7 +1019,7 @@ export default function App() {
       </nav>
 
       {/* Main Body Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 w-full">
+      <main ref={mainRef} className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-8 flex-1 w-full">
       <div key={`${role}-${activeTab}-${currentUser.apaar_id || 'anon'}-${identityMode}-${authSession?.user?.id || 'guest'}`} className="view-enter space-y-6">
 
         {/* 1. STUDENT DASHBOARD */}
@@ -1001,7 +1028,7 @@ export default function App() {
             {/* ID slip */}
             <section className="slip">
               <Guilloche className="slip-mark" size={380} lines={10} />
-              <div className="relative p-6 md:p-8 grid gap-6 md:grid-cols-[1fr_auto] items-start">
+              <div className="relative p-5 sm:p-6 md:p-8 grid gap-6 md:grid-cols-[1fr_auto] items-start">
                 <div>
                   <div className="flex flex-wrap items-center gap-4">
                     <h2 className="slip-name text-slate-900">{currentUser.name}</h2>
@@ -1025,14 +1052,34 @@ export default function App() {
               </div>
             </section>
 
+            {/* Standing summary */}
+            <section className="ledger" aria-label="Standing summary">
+              <div className="ledger-cell has-gauge">
+                <div className="ledger-label">Attendance</div>
+                <div className="ledger-num">{attPct.toFixed(1)}<small>%</small></div>
+                <div className="gauge">
+                  <div className="gauge-fill" style={{ width: `${Math.min(100, Math.max(0, attPct))}%`, background: attPct >= 75 ? "var(--green)" : "var(--saffron)" }} />
+                  <span className="gauge-cut" />
+                </div>
+              </div>
+              <div className="ledger-cell">
+                <div className="ledger-label">Credits in ABC ledger</div>
+                <div className="ledger-num">{(studentDetails?.credits || []).reduce((n, c) => n + (Number(c.credits) || 0), 0)}<small>credits</small></div>
+              </div>
+              <div className="ledger-cell">
+                <div className="ledger-label">Scholarship attendance cutoff</div>
+                <div className={`ledger-num is-word ${attPct >= 75 ? "is-ok" : "is-warn"}`}>{attPct >= 75 ? "Met" : "Not met"}<small>75% needed</small></div>
+              </div>
+            </section>
+
             {/* Academic Bank of Credits Ledger */}
-            <section className="bg-white border border-slate-200 rounded-lg shadow-sm p-6">
+            <section className="bg-white border border-slate-200 rounded-lg shadow-sm p-4 sm:p-6">
               <h3 className="text-sm font-bold uppercase tracking-wider text-slate-700 mb-4 flex items-center gap-2">
                 <IconCheck /> Academic Bank of Credits (ABC) Verified Course Ledger
               </h3>
               {studentDetails?.credits && studentDetails.credits.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                  <table className="stack w-full text-left text-xs">
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
                       <tr>
                         <th className="p-3">Course / Module</th>
@@ -1062,47 +1109,55 @@ export default function App() {
 
         {/* 2. ATTENDANCE QR */}
         {role === "Student" && activeTab === "attendance" && (
-          <div className="max-w-xl mx-auto space-y-6">
-            <div className="bg-white border border-slate-200 rounded-xl shadow-md p-6 text-center space-y-4 relative overflow-hidden">
-              <div className="flex justify-between items-center text-xs text-slate-500 pb-2 border-b border-slate-100">
-                <span className="font-semibold text-slate-700">Rotating Signed Attendance QR</span>
-                <span className="font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold">Refreshes in {countdown}s</span>
-              </div>
-
-              {qrError ? (
-                <div className="p-8 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm space-y-2">
-                  <IconLock />
-                  <div className="font-bold">QR Attendance Disabled</div>
-                  <p className="text-xs">{qrError}</p>
+          <div className="max-w-md mx-auto space-y-6">
+            <div className="ticket">
+              <Guilloche className="ticket-mark" size={300} lines={9} />
+              <div className="relative space-y-5">
+                <div className="flex flex-wrap justify-between items-center gap-2">
+                  <span className="font-bold text-slate-900 text-base">Rotating Signed Attendance QR</span>
+                  <span className="font-mono bg-blue-50 text-blue-700 px-2.5 py-1 rounded font-bold text-sm">Refreshes in {countdown}s</span>
                 </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
-                  {qrToken ? (
-                    <QRCodeSVG value={qrToken} size={220} level="H" includeMargin={true} />
-                  ) : (
-                    <div className="w-[220px] h-[220px] bg-slate-200 animate-pulse rounded flex items-center justify-center text-xs text-slate-400">
-                      Generating token...
-                    </div>
-                  )}
-                  <p className="text-xs text-slate-500 max-w-xs">
-                    Protected by HMAC-SHA256 signature and nonce. Verified only at your assigned institute scanner terminal.
-                  </p>
-                </div>
-              )}
 
-              {qrToken && (
-                <div className="space-y-2">
-                  <div className="text-xs text-slate-500 font-mono break-all p-2 bg-slate-100 rounded border border-slate-200 text-left">
-                    {qrToken}
+                {qrError ? (
+                  <div className="p-6 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm space-y-2">
+                    <IconLock />
+                    <div className="font-bold">QR Attendance Disabled</div>
+                    <p className="text-xs">{qrError}</p>
                   </div>
-                  <button
-                    onClick={() => copyToClipboard(qrToken)}
-                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-semibold transition"
-                  >
-                    {copiedToken ? "✓ Copied to Clipboard" : "Copy Token for Scanner Terminal"}
-                  </button>
-                </div>
-              )}
+                ) : (
+                  <>
+                    <div className="qr-wrap">
+                      <svg className="qr-ring" viewBox="0 0 100 100" aria-hidden="true">
+                        <rect className="track" x="1" y="1" width="98" height="98" rx="4" />
+                        <rect className={`run${countdown <= 5 ? " is-low" : ""}`} x="1" y="1" width="98" height="98" rx="4" pathLength="1"
+                          style={{ strokeDasharray: 1, strokeDashoffset: 1 - Math.max(0, Math.min(1, countdown / 30)) }} />
+                      </svg>
+                      {qrToken ? (
+                        <div className="qr-face"><QRCodeSVG value={qrToken} size={220} level="H" includeMargin={false} /></div>
+                      ) : (
+                        <div className="qr-face bg-slate-200 animate-pulse text-xs text-slate-500">Generating token...</div>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-600 text-center max-w-xs mx-auto">
+                      Protected by HMAC-SHA256 signature and nonce. Verified only at your assigned institute scanner terminal.
+                    </p>
+                  </>
+                )}
+
+                {qrToken && (
+                  <div className="space-y-2">
+                    <div className="text-xs text-slate-500 font-mono break-all p-2.5 bg-slate-100 rounded border border-slate-200 text-left max-h-24 overflow-y-auto">
+                      {qrToken}
+                    </div>
+                    <button
+                      onClick={() => copyToClipboard(qrToken)}
+                      className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded text-sm font-semibold transition"
+                    >
+                      {copiedToken ? "✓ Copied to Clipboard" : "Copy Token for Scanner Terminal"}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1110,12 +1165,12 @@ export default function App() {
         {/* 3. SCHOLARSHIP SCHEMES */}
         {role === "Student" && activeTab === "schemes" && (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-wrap justify-between items-center gap-3">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Configurable Scholarship Gate</h2>
+                <h2 className="page-title">Configurable Scholarship Gate</h2>
                 <p className="text-xs text-slate-500">Multi-rule evaluation across attendance cutoff, income ceiling, gender, and host institute compliance.</p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={handleSimulateAttendanceDrop}
                   className="bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 px-3 py-1.5 rounded text-xs font-semibold transition"
@@ -1140,7 +1195,7 @@ export default function App() {
             {isEvaluatingSchemes ? (
               <div className="p-8 text-center text-xs text-slate-400 animate-pulse">Evaluating student eligibility criteria against active schemes...</div>
             ) : (
-              <div className="grid gap-6 md:grid-cols-3">
+              <div className="stagger grid gap-4 sm:gap-6 sm:grid-cols-2 xl:grid-cols-3">
                 {schemeResults.map((scheme) => {
                   const totalChecks = scheme.checks?.length || 0;
                   const passedChecks = scheme.checks?.filter(c => c.passed).length || 0;
@@ -1152,9 +1207,9 @@ export default function App() {
                       key={scheme.scheme_id}
                       className={`border rounded-xl shadow-sm p-5 flex flex-col justify-between transition-all ${
                         isDisbursed
-                          ? "bg-gradient-to-b from-blue-50/50 to-white border-blue-200 ring-1 ring-blue-100"
+                          ? "bg-blue-50/60 border-blue-200 border-l-[5px] border-l-blue-600"
                           : scheme.status === "ELIGIBLE"
-                          ? "bg-gradient-to-b from-emerald-50/40 to-white border-emerald-300 ring-1 ring-emerald-200 shadow-md"
+                          ? "bg-emerald-50/50 border-emerald-300 border-l-[5px] border-l-emerald-600"
                           : "bg-white border-slate-200"
                       }`}
                     >
@@ -1310,8 +1365,8 @@ export default function App() {
 
         {/* 4. ADMISSION & TRANSFER REQUESTS */}
         {role === "Student" && activeTab === "requests" && (
-          <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
               <h3 className="font-bold text-slate-900 text-sm">Submit New Application</h3>
               {requestMsg && (
                 <div className={`p-3 text-xs rounded border ${requestMsg.type === "SUCCESS" ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-red-50 text-red-800 border-red-200"}`}>
@@ -1369,10 +1424,10 @@ export default function App() {
               </form>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6">
               <h3 className="font-bold text-slate-900 text-sm mb-4">My Application & Transfer History</h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="stack w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <tr>
                       <th className="p-3">Request ID</th>
@@ -1406,8 +1461,8 @@ export default function App() {
         {/* 5. INSTITUTE ATTENDANCE SCANNER */}
         {role === "Institute Admin / Teacher" && activeTab === "scanner" && (
           <div className="max-w-2xl mx-auto space-y-6">
-            <div className="bg-white border border-slate-200 rounded-xl shadow-md p-6 space-y-4">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-md p-4 sm:p-6 space-y-4">
+              <div className="flex flex-wrap justify-between items-center gap-3 border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">Faculty Rotating QR Scanner</h3>
                   <p className="text-xs text-slate-500">Scan student attendance token. Enforces single-use nonces and active enrollment.</p>
@@ -1446,11 +1501,11 @@ export default function App() {
               {scannerMode === "quick" && (
                 <div className="space-y-3 pt-2">
                   <label className="block text-xs font-semibold text-slate-600">Select Student to Scan</label>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <select
                       value={scannerTargetStudent}
                       onChange={(e) => setScannerTargetStudent(e.target.value)}
-                      className="flex-1 p-2 text-xs border border-slate-300 rounded"
+                      className="w-full sm:flex-1 min-w-0 p-2 text-xs border border-slate-300 rounded"
                     >
                       {PERSONAS.map(p => (
                         <option key={p.apaar_id} value={p.apaar_id}>{p.name} ({p.inst})</option>
@@ -1458,7 +1513,7 @@ export default function App() {
                     </select>
                     <button
                       onClick={() => handleQuickScanStudent(scannerTargetStudent)}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-semibold transition"
+                      className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded font-semibold transition"
                     >
                       Verify & Mark Attendance
                     </button>
@@ -1510,8 +1565,8 @@ export default function App() {
 
         {/* 6. INSTITUTE ADMISSION REQUESTS QUEUE */}
         {role === "Institute Admin / Teacher" && activeTab === "institute-requests" && (
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
+            <div className="flex flex-wrap justify-between items-center gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">Admission & Verification Queue</h3>
                 <p className="text-xs text-slate-500">Reconciles student join claims against institutional sanctioned intake and faculty ratio.</p>
@@ -1525,7 +1580,7 @@ export default function App() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="stack w-full text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                   <tr>
                     <th className="p-3">Request ID</th>
@@ -1579,9 +1634,9 @@ export default function App() {
         {/* 7. AICTE COMPLIANCE RADAR */}
         {role === "AICTE Officer" && activeTab === "compliance" && (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-wrap justify-between items-center gap-3">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Institutional Compliance Radar</h2>
+                <h2 className="page-title">Institutional Compliance Radar</h2>
                 <p className="text-xs text-slate-500">Real-time enforcement of Sanctioned Intake, Faculty-Student Ratio (20:1), and Under-filling Flags.</p>
               </div>
               <button
@@ -1592,14 +1647,14 @@ export default function App() {
               </button>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-5">
+            <div className="stagger grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {complianceData.map(inst => (
                 <div key={inst.institute_id} className={`p-4 rounded-xl border bg-white shadow-sm flex flex-col justify-between ${inst.ratio_breach ? "border-red-300 ring-2 ring-red-100" : (inst.under_filled ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200")}`}>
                   <div>
                     <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${inst.ratio_breach ? "bg-red-100 text-red-800" : (inst.under_filled ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800")}`}>
                       {inst.compliance_status}
                     </span>
-                    <h4 className="font-bold text-xs text-slate-900 mt-2 line-clamp-2">{inst.institute_name}</h4>
+                    <h4 className="font-bold text-sm leading-snug text-slate-900 mt-2 line-clamp-2">{inst.institute_name}</h4>
                     <p className="text-[10px] text-slate-400 font-mono">{inst.institute_id} • {inst.state}</p>
 
                     <dl className="mt-3 space-y-1 text-xs">
@@ -1607,18 +1662,19 @@ export default function App() {
                       <div className="flex justify-between"><dt className="text-slate-500">Occupancy:</dt><dd className="font-bold">{inst.occupancy_pct}%</dd></div>
                       <div className="flex justify-between"><dt className="text-slate-500">Faculty Ratio:</dt><dd className={`font-bold ${inst.ratio_breach ? "text-red-600" : "text-emerald-700"}`}>{inst.faculty_student_ratio}</dd></div>
                     </dl>
+                    <div className="mini-gauge is-wide" aria-hidden="true"><i className={Number(inst.occupancy_pct) < 50 ? "is-low" : ""} style={{ width: `${Math.min(100, Math.max(0, Number(inst.occupancy_pct) || 0))}%` }} /></div>
                   </div>
                 </div>
               ))}
             </div>
 
             {/* Ghost student anomaly detection panel */}
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-3">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-3">
               <h3 className="font-bold text-slate-900 text-sm text-red-600 flex items-center gap-2">
                 <IconAlert /> Ghost Student Anomaly Flags (Zero Scans in 15-Day Confirmation Window)
               </h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="stack w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <tr>
                       <th className="p-3">APAAR ID</th>
@@ -1650,8 +1706,8 @@ export default function App() {
         {/* 8. AICTE RECONCILIATION */}
         {role === "AICTE Officer" && activeTab === "reconciliation" && (
           <div className="max-w-2xl mx-auto space-y-6">
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
+              <div className="flex flex-wrap justify-between items-center gap-3 border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">Automated Nightly State Reconciliation</h3>
                   <p className="text-xs text-slate-500">Atomic ledger audit between institute counters and active student enrollments.</p>
@@ -1688,8 +1744,8 @@ export default function App() {
 
         {/* 9. GRIEVANCES */}
         {activeTab === "grievances" && (
-          <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
               <h3 className="font-bold text-slate-900 text-sm">Lodge Grievance / Dispute</h3>
               {grievanceMsg && (
                 <div className={`p-3 text-xs rounded border ${grievanceMsg.type === "SUCCESS" ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-red-50 text-red-800 border-red-200"}`}>
@@ -1726,10 +1782,10 @@ export default function App() {
               </form>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
               <h3 className="font-bold text-slate-900 text-sm">Dispute & Grievance Ledger</h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="stack w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                     <tr>
                       <th className="p-3">ID</th>
@@ -1772,12 +1828,12 @@ export default function App() {
         {/* 10. TAMPER-EVIDENT AUDIT TRAIL */}
         {activeTab === "audit" && (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-wrap justify-between items-center gap-3">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Cryptographically Chained Audit Ledger</h2>
+                <h2 className="page-title">Cryptographically Chained Audit Ledger</h2>
                 <p className="text-xs text-slate-500">Every lifecycle transition forms a SHA-256 hash link with the previous block: SHA256(prev_hash + payload).</p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={tamperAuditLog}
                   className="bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 px-3 py-1.5 rounded text-xs font-semibold transition"

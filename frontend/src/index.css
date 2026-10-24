@@ -50,13 +50,15 @@ button:disabled { cursor: not-allowed; }
 
 /* ---------- Tab strip with sliding ink underline ---------- */
 .tabbar { background: var(--sheet); border-bottom: 1px solid var(--rule); position: sticky; top: 0; z-index: 20; }
-.tabs { position: relative; display: flex; overflow-x: auto; scrollbar-width: none; gap: 0.25rem; }
+.tabs { position: relative; display: flex; overflow-x: auto; scrollbar-width: none; gap: 0.25rem; padding-inline: 0.75rem; overscroll-behavior-x: contain;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 0.75rem, #000 calc(100% - 0.75rem), transparent);
+          mask-image: linear-gradient(90deg, transparent, #000 0.75rem, #000 calc(100% - 0.75rem), transparent); }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs::after {
   content: ''; position: absolute; left: 0; bottom: 0; height: 3px; width: var(--iw, 0px); background: var(--ink);
   transform: translateX(var(--ix, 0px)); transition: transform 0.4s var(--ease), width 0.4s var(--ease);
 }
-.nav-tab { flex: none; padding: 0.85rem 0.9rem; font-size: 0.9rem; font-weight: 500; color: var(--ink-2); transition: color 0.15s; white-space: nowrap; }
+.nav-tab { flex: none; min-height: 48px; padding: 0.85rem 0.9rem; font-size: 0.9375rem; font-weight: 500; color: var(--ink-2); transition: color 0.15s; white-space: nowrap; }
 .nav-tab:hover { color: var(--ink); }
 .nav-tab.is-active { color: var(--ink); font-weight: 700; }
 
@@ -99,13 +101,14 @@ button:disabled { cursor: not-allowed; }
 /* ---------- QR ticket with countdown ring ---------- */
 .ticket { position: relative; background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 1.5rem 1.25rem 1.25rem; box-shadow: 0 2px 0 rgba(37, 33, 95, 0.09); overflow: hidden; }
 .ticket-mark { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); color: var(--ink); opacity: 0.07; pointer-events: none; }
-.qr-wrap { position: relative; width: 276px; height: 276px; margin: 0 auto; display: grid; place-items: center; }
+.qr-wrap { position: relative; width: min(276px, 100%); aspect-ratio: 1; margin: 0 auto; display: grid; place-items: center; }
 .qr-ring { position: absolute; inset: 0; width: 100%; height: 100%; }
 .qr-ring rect { fill: none; stroke-width: 1.6; }
 .qr-ring .track { stroke: #dfe2f1; }
 .qr-ring .run { stroke: var(--ink); transition: stroke-dashoffset 1s linear, stroke 0.3s; }
 .qr-ring .run.is-low { stroke: var(--brick); }
-.qr-face { position: relative; background: #fff; padding: 10px; border: 1px solid var(--rule); border-radius: 4px; }
+.qr-face { position: relative; background: #fff; padding: 8px; border: 1px solid var(--rule); border-radius: 4px; width: 80%; aspect-ratio: 1; display: grid; place-items: center; }
+.qr-face svg { width: 100%; height: 100%; display: block; }
 .qr-count { font-weight: 800; font-stretch: 118%; font-size: 1.3rem; }
 
 /* ---------- Result card (scan / chain status) ---------- */
@@ -136,6 +139,82 @@ tbody tr { transition: background-color 0.15s; }
 
 /* ---------- Footer ---------- */
 .colophon { border-top: 1px solid var(--rule); background: var(--sheet); }
+
+/* =====================================================================
+   Readability floor, forms and touch targets
+   (#root prefix beats the Tailwind CDN utilities regardless of injection order)
+   ===================================================================== */
+#root .text-xs { font-size: 0.8125rem; line-height: 1.3rem; }
+#root :is(.text-\[9px\], .text-\[10px\], .text-\[11px\]) { font-size: 0.75rem; line-height: 1rem; }
+#root .tracking-wider { letter-spacing: 0.01em; }
+#root h3.uppercase { text-transform: none; letter-spacing: 0; font-size: 1rem; }
+#root p { text-wrap: pretty; }
+#root .brand { font-size: clamp(1.3rem, 4.6vw, 1.6rem); }
+#root :is(input, select, textarea):focus-visible { outline: none; border-color: var(--ink); box-shadow: 0 0 0 3px rgba(62, 58, 154, 0.2); }
+#root button { transition: transform 0.12s var(--ease), background-color 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s; }
+#root button:not(:disabled):active { transform: translateY(1px) scale(0.985); }
+@media (max-width: 767px) { #root :is(input, select, textarea) { font-size: 1rem; } }  /* stops iOS focus-zoom */
+@media (pointer: coarse) {
+  #root :is(main, header, .modal-sheet) button:not(.btn-bare) { min-height: 42px; }
+  #root :is(main, header, .modal-sheet) :is(select, input:not([type="checkbox"]):not([type="radio"])) { min-height: 42px; }
+}
+
+/* ---------- Page titles ---------- */
+.page-title { font-size: clamp(1.35rem, 2.6vw, 1.75rem); line-height: 1.15; font-weight: 800; font-stretch: 115%; letter-spacing: -0.015em; color: var(--ink); text-wrap: balance; }
+#root .page-title + p { font-size: 0.9375rem; line-height: 1.5rem; max-width: 62ch; margin-top: 0.35rem; color: var(--ink-2); }
+
+/* ---------- Letterhead: stacks on phones, one row on desktop ---------- */
+.brand-block { flex: 1 1 18rem; min-width: 0; }
+.session-controls { display: grid; gap: 0.5rem; width: 100%; }
+.session-controls .seg { display: grid; grid-template-columns: 1fr 1fr; }
+.session-controls .pick { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.session-controls .pick select:only-child { grid-column: 1 / -1; }
+@media (max-width: 639px) { #root .session-controls select { width: 100%; max-width: none; } }
+@media (min-width: 640px) {
+  .session-controls { display: flex; flex-wrap: wrap; align-items: center; width: auto; flex: 1 1 auto; }
+  .session-controls .seg, .session-controls .pick { display: flex; }
+}
+@media (min-width: 1024px) { .session-controls { flex: 0 1 auto; justify-content: flex-end; } }
+.live-tag { position: relative; display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; font-weight: 600; color: var(--green); background: #eaf5ee; border: 1px solid #a9d7bd; border-radius: 999px; padding: 0.1rem 0.6rem 0.1rem 0.5rem; }
+.live-tag::before, .live-tag::after { content: ''; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--green); }
+.live-tag::after { position: absolute; left: 0.5rem; animation: ping 2.2s var(--ease) infinite; }
+@keyframes ping { 0% { transform: scale(1); opacity: 0.55; } 70%, 100% { transform: scale(2.8); opacity: 0; } }
+
+/* ---------- Motion: one list stagger + overlay sheet ---------- */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sheet-up { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+@keyframes sheet-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+.stagger > * { animation: rise 0.42s var(--ease) both; }
+.stagger > :nth-child(2) { animation-delay: 50ms; }
+.stagger > :nth-child(3) { animation-delay: 100ms; }
+.stagger > :nth-child(4) { animation-delay: 150ms; }
+.stagger > :nth-child(5) { animation-delay: 200ms; }
+.stagger > :nth-child(n+6) { animation-delay: 250ms; }
+.modal-scrim { background: rgba(30, 26, 77, 0.55); animation: fade-in 0.2s ease both; }
+.modal-sheet { animation: sheet-up 0.34s var(--ease) both; padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); }
+@media (min-width: 640px) { .modal-sheet { animation-name: sheet-pop; } }
+
+/* ---------- Ledger extras ---------- */
+.ledger-cell.has-gauge { padding-bottom: 2.4rem; }
+.ledger-num.is-warn { color: var(--saffron); }
+.ledger-num.is-ok { color: var(--green); }
+.ledger-num.is-word { font-size: clamp(1.8rem, 3.4vw, 2.4rem); }
+@media (max-width: 767px) { .ledger-cell { padding: 1rem 1.15rem; } }
+.mini-gauge.is-wide { width: 100%; height: 6px; margin-top: 0.7rem; }
+.ticket-mark { z-index: 0; }
+.ticket > .relative { z-index: 1; }
+
+/* ---------- Tables become labelled cards on phones (labels set by App.jsx) ---------- */
+@media (max-width: 639px) {
+  table.stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+  table.stack tr { padding: 0.8rem 0; }
+  table.stack td { position: relative; padding: 0.25rem 0 0.25rem 7.75rem; min-height: 1.8rem; text-align: left; overflow-wrap: anywhere; }
+  table.stack td::before { content: attr(data-label); position: absolute; left: 0; top: 0.25rem; width: 7.25rem; color: var(--ink-2); font-weight: 500; font-size: 0.8125rem; line-height: 1.3rem; }
+}
+
+.colophon { padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
