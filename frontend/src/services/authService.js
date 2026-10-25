@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.js';
 
 export const DEMO_PERSONAS = [
   { apaar_id: "100000000001", name: "Priya Sharma", role: "Student", tag: "Eligible for Pragati (91.6% Att)", income: "₹4,50,000", cat: "General", gender: "Female", inst: "INST_DEL_01", status: "ACTIVE", email: "priya.sharma@sih2026.edu" },

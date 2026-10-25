@@ -11,7 +11,7 @@ import {
   signOut,
   onAuthStateChange
 } from './services/authService';
-import { getStudentProfile } from './services/studentService';
+import { getStudentProfile, COMPREHENSIVE_STUDENT_DATA } from './services/studentService';
 import { getInstitutes, getComplianceOverview } from './services/instituteService';
 import { getEnrollmentRequests, submitEnrollmentRequest, processEnrollmentRequest } from './services/enrollmentService';
 import { getAttendanceQR, recordAttendanceScan } from './services/attendanceService';
@@ -145,7 +145,7 @@ export default function App() {
   const cameraScannerRef = useRef(null);
 
   // Student Profile Data
-  const [studentDetails, setStudentDetails] = useState(null);
+  const [studentDetails, setStudentDetails] = useState(COMPREHENSIVE_STUDENT_DATA["100000000001"] || null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
 
   // 1. Initial Session Check & Auth State Subscription
@@ -210,6 +210,11 @@ export default function App() {
       targetApaar = p.apaar_id;
     }
 
+    // Immediately pre-populate comprehensive baseline profile to avoid 0/empty flash
+    if (COMPREHENSIVE_STUDENT_DATA[targetApaar]) {
+      setStudentDetails(COMPREHENSIVE_STUDENT_DATA[targetApaar]);
+    }
+
     // Force clear stale status messages & reset timers
     setDisbursalMsg(null);
     setRequestMsg(null);
@@ -242,7 +247,10 @@ export default function App() {
           ...prev,
           name: data.name || prev.name,
           status: data.status || prev.status,
-          inst: data.institute_id || prev.inst
+          inst: data.institute_name || data.institute_id || prev.inst,
+          cat: data.category || prev.cat,
+          gender: data.gender || prev.gender,
+          income: data.family_income ? `₹${Number(data.family_income).toLocaleString('en-IN')}` : prev.income
         }));
       }
     } catch (e) {
@@ -1035,14 +1043,14 @@ export default function App() {
                     <span className={`stamp-tag${currentUser.status === "ACTIVE" ? " is-ok" : ""}`}>{currentUser.status}</span>
                   </div>
                   <dl className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-4">
-                    <div><dt>APAAR ID</dt><dd className="font-mono">XXXXXXXX{currentUser.apaar_id.slice(-4)}</dd></div>
-                    <div><dt>Institution</dt><dd>{currentUser.inst || "Unenrolled"}</dd></div>
-                    <div><dt>Category</dt><dd>{currentUser.cat}</dd></div>
-                    <div><dt>Gender</dt><dd>{currentUser.gender}</dd></div>
-                    <div><dt>Family income</dt><dd className="num">{currentUser.income}</dd></div>
+                    <div><dt>APAAR ID</dt><dd className="font-mono">XXXXXXXX{String(currentUser?.apaar_id || '').slice(-4)}</dd></div>
+                    <div><dt>Institution</dt><dd>{studentDetails?.institute_name || currentUser.inst || "Unenrolled"}</dd></div>
+                    <div><dt>Program</dt><dd>{studentDetails?.program || "B.Tech Technical Program"}</dd></div>
+                    <div><dt>Category</dt><dd>{currentUser.cat || studentDetails?.category || "General"}</dd></div>
+                    <div><dt>Gender</dt><dd>{currentUser.gender || studentDetails?.gender || "Female"}</dd></div>
+                    <div><dt>Family income</dt><dd className="num">{currentUser.income || `₹${(studentDetails?.family_income || 0).toLocaleString('en-IN')}`}</dd></div>
                     <div><dt>Attendance</dt><dd className="num">{attPct.toFixed(1)}%</dd></div>
-                    <div><dt>Status tag</dt><dd className="truncate text-xs font-medium text-slate-600">{currentUser.tag}</dd></div>
-                    <div><dt>Consent</dt><dd className="text-emerald-700 font-semibold">Granted (e-KYC)</dd></div>
+                    <div><dt>Status tag</dt><dd className="truncate text-xs font-medium text-slate-600">{currentUser.tag || studentDetails?.status || "Active"}</dd></div>
                   </dl>
                 </div>
                 <div className="flex md:flex-col items-center gap-3 self-center">
@@ -1104,6 +1112,209 @@ export default function App() {
                 <p className="text-xs text-slate-500 italic">No transferred academic credits deposited in ABC ledger yet.</p>
               )}
             </section>
+
+            {/* Examination & Semester Performance Records */}
+            <section className="bg-white border border-slate-200 rounded-lg shadow-sm p-4 sm:p-6">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-700 mb-4 flex items-center gap-2">
+                <IconCheck /> Examination & Academic Performance Records
+              </h3>
+              {studentDetails?.results && studentDetails.results.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="stack w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                      <tr>
+                        <th className="p-3">Examination / Semester</th>
+                        <th className="p-3">SGPA</th>
+                        <th className="p-3">Cumulative CGPA</th>
+                        <th className="p-3">Credits Earned</th>
+                        <th className="p-3">Result Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {studentDetails.results.map((r, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="p-3 font-semibold text-slate-800">{r.semester}</td>
+                          <td className="p-3 font-mono font-bold text-slate-800">{r.sgpa}</td>
+                          <td className="p-3 font-mono font-bold text-blue-700">{r.cgpa}</td>
+                          <td className="p-3 text-slate-700 font-semibold">{r.credits_earned} Credits</td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800">
+                              {r.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 italic">No published semester examination results on record.</p>
+              )}
+            </section>
+          </div>
+        )}
+
+        {/* 1B. INSTITUTE ADMIN DASHBOARD */}
+        {role === "Institute Admin / Teacher" && activeTab === "dashboard" && (
+          <div className="space-y-6">
+            <section className="slip">
+              <Guilloche className="slip-mark" size={380} lines={10} />
+              <div className="relative p-5 sm:p-6 md:p-8 grid gap-6 md:grid-cols-[1fr_auto] items-start">
+                <div>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <h2 className="slip-name text-slate-900">Dr. Arvind Mehta</h2>
+                    <span className="stamp-tag is-ok">ACTIVE ACCREDITATION</span>
+                  </div>
+                  <dl className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-4">
+                    <div><dt>Institute</dt><dd>Delhi Engineering & Tech</dd></div>
+                    <div><dt>AICTE Code</dt><dd className="font-mono">1-1001</dd></div>
+                    <div><dt>Role / Designation</dt><dd>Dean / Principal</dd></div>
+                    <div><dt>State / Region</dt><dd>Delhi (North-Western)</dd></div>
+                    <div><dt>Sanctioned Intake</dt><dd className="num">120 Seats</dd></div>
+                    <div><dt>Verified Intake</dt><dd className="num text-emerald-700">118 Students (98.3%)</dd></div>
+                    <div><dt>Faculty Strength</dt><dd className="num">8 FTE (14.75:1 Ratio)</dd></div>
+                    <div><dt>Compliance State</dt><dd className="text-emerald-700 font-semibold">Fully Compliant</dd></div>
+                  </dl>
+                </div>
+                <div className="flex md:flex-col items-center gap-3 self-center">
+                  <Guilloche size={72} lines={8} check />
+                  <span className="text-[10px] uppercase font-mono tracking-wider text-slate-500">AICTE Approved</span>
+                </div>
+              </div>
+            </section>
+
+            <section className="ledger" aria-label="Institute quick metrics">
+              <div className="ledger-cell has-gauge">
+                <div className="ledger-label">Capacity Utilization</div>
+                <div className="ledger-num">98.3<small>%</small></div>
+                <div className="gauge">
+                  <div className="gauge-fill" style={{ width: "98.3%", background: "var(--green)" }} />
+                  <span className="gauge-cut" />
+                </div>
+              </div>
+              <div className="ledger-cell">
+                <div className="ledger-label">Pending Admission Queue</div>
+                <div className="ledger-num">{requestsList.filter(r => r.state === 'SUBMITTED').length}<small>applications</small></div>
+              </div>
+              <div className="ledger-cell">
+                <div className="ledger-label">Faculty-Student Ratio</div>
+                <div className="ledger-num is-word is-ok">14.8:1<small>≤ 20:1 required</small></div>
+              </div>
+            </section>
+
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-5 space-y-3">
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <IconScan /> Biometric Attendance Terminal
+                </h3>
+                <p className="text-xs text-slate-600">
+                  Scan and cryptographically record student attendance via live rotating QR codes. Prevents proxy and ghost attendance fraud.
+                </p>
+                <button
+                  onClick={() => setActiveTab("scanner")}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center gap-2"
+                >
+                  Open Attendance Scanner →
+                </button>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-5 space-y-3">
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <IconCheck /> Admission & Lateral Entry Requests
+                </h3>
+                <p className="text-xs text-slate-600">
+                  Verify prior qualifications and approve direct admission, lateral entry, or inter-college transfer applications.
+                </p>
+                <button
+                  onClick={() => { setActiveTab("institute-requests"); fetchRequests(); }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold transition flex items-center gap-2"
+                >
+                  Review Admission Queue ({requestsList.filter(r => r.state === 'SUBMITTED').length}) →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 1C. AICTE REGULATOR DASHBOARD */}
+        {role === "AICTE Officer" && activeTab === "dashboard" && (
+          <div className="space-y-6">
+            <section className="slip">
+              <Guilloche className="slip-mark" size={380} lines={10} />
+              <div className="relative p-5 sm:p-6 md:p-8 grid gap-6 md:grid-cols-[1fr_auto] items-start">
+                <div>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <h2 className="slip-name text-slate-900">Prof. S. R. Raman</h2>
+                    <span className="stamp-tag is-ok">CENTRAL REGULATOR</span>
+                  </div>
+                  <dl className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-4">
+                    <div><dt>Bureau</dt><dd>Central Regulatory Wing</dd></div>
+                    <div><dt>Designation</dt><dd>Chief Compliance Officer</dd></div>
+                    <div><dt>Headquarters</dt><dd>AICTE New Delhi</dd></div>
+                    <div><dt>Jurisdiction</dt><dd>All-India Technical Ed</dd></div>
+                    <div><dt>Monitored Institutes</dt><dd className="num">5 Institutions</dd></div>
+                    <div><dt>Total Intake Monitored</dt><dd className="num">500 Sanctioned</dd></div>
+                    <div><dt>Compliance Flags</dt><dd className="num text-red-600">2 Breaches Detected</dd></div>
+                    <div><dt>Audit Chain State</dt><dd className="text-emerald-700 font-semibold">Hash-Chained Intact</dd></div>
+                  </dl>
+                </div>
+                <div className="flex md:flex-col items-center gap-3 self-center">
+                  <Guilloche size={72} lines={8} check />
+                  <span className="text-[10px] uppercase font-mono tracking-wider text-slate-500">AICTE Apex Seal</span>
+                </div>
+              </div>
+            </section>
+
+            <section className="ledger" aria-label="National overview metrics">
+              <div className="ledger-cell has-gauge">
+                <div className="ledger-label">National Enrollment Health</div>
+                <div className="ledger-num">75.6<small>%</small></div>
+                <div className="gauge">
+                  <div className="gauge-fill" style={{ width: "75.6%", background: "var(--green)" }} />
+                  <span className="gauge-cut" />
+                </div>
+              </div>
+              <div className="ledger-cell">
+                <div className="ledger-label">Ghost Student Anomalies</div>
+                <div className="ledger-num text-red-600">{ghostStudents.length || 1}<small>flagged</small></div>
+              </div>
+              <div className="ledger-cell">
+                <div className="ledger-label">Regulatory Compliance Status</div>
+                <div className="ledger-num is-word is-warn">2 Alerts<small>Action needed</small></div>
+              </div>
+            </section>
+
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-5 space-y-3">
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <IconAlert /> Institutional Compliance Radar
+                </h3>
+                <p className="text-xs text-slate-600">
+                  Inspect sanctioned intake versus verified enrollment, faculty ratio violations, and severe seat under-filling.
+                </p>
+                <button
+                  onClick={() => { setActiveTab("compliance"); fetchCompliance(); }}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center gap-2"
+                >
+                  Open Compliance Radar →
+                </button>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-5 space-y-3">
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <IconRefresh /> Automated Nightly State Reconciliation
+                </h3>
+                <p className="text-xs text-slate-600">
+                  Cross-verify atomic ledger counters between college registers and APAAR verified identity rolls.
+                </p>
+                <button
+                  onClick={() => { setActiveTab("reconciliation"); fetchCompliance(); }}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition flex items-center gap-2"
+                >
+                  Run State Reconciliation →
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

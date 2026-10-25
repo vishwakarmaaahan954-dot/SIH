@@ -1,7 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { DEMO_PERSONAS } from './authService';
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE) || "http://localhost:8000";
 const SECRET_KEY = "sih-2026-apaar-verify-secret-key-mock";
 
 export const DEFAULT_SCHEME_RULES = {
