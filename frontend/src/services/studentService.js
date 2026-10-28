@@ -1,8 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase.js';
 import { DEMO_PERSONAS } from './authService.js';
 
-const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE) || "http://localhost:8000";
-
 export const COMPREHENSIVE_STUDENT_DATA = {
   "100000000001": {
     apaar_id: "100000000001",
@@ -278,7 +276,7 @@ export async function getStudentProfile(apaarId) {
             .select('*')
             .eq('apaar_id', apaarId);
           if (resData) results = resData;
-        } catch (e) {}
+        } catch {}
 
         const fallback = COMPREHENSIVE_STUDENT_DATA[apaarId] || {};
 

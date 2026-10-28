@@ -30,7 +30,7 @@ export async function getInstitutes() {
     if (res.ok) {
       return await res.json();
     }
-  } catch (e) {}
+  } catch {}
 
   return FALLBACK_INSTITUTES;
 }
@@ -78,7 +78,7 @@ export async function getComplianceOverview() {
   try {
     const res = await fetch(`${API_BASE}/aicte/compliance-overview`);
     if (res.ok) return await res.json();
-  } catch (e) {}
+  } catch {}
 
   return [
     { institute_id: "INST_DEL_01", institute_name: "Delhi Engineering & Technology Institute", state: "Delhi", program: "B.Tech", sanctioned_intake: 120, verified_students: 118, faculty_fte: 8, occupancy_pct: 98.3, faculty_student_ratio: "14.75:1", ratio_breach: false, under_filled: false, compliance_status: "COMPLIANT" },

@@ -31,7 +31,7 @@ export async function getEnrollmentRequests(instituteId = null) {
   try {
     const res = await fetch(`${API_BASE}/enrollment/requests`);
     if (res.ok) return await res.json();
-  } catch (e) {}
+  } catch {}
 
   return [];
 }
@@ -69,7 +69,7 @@ export async function submitEnrollmentRequest({ apaar_id, institute_id, program 
             p_record_id: requestId,
             p_payload: { apaar_id, type, to_inst, from_inst, program, year }
           });
-        } catch (auditErr) {}
+        } catch {}
 
         return {
           status: "SUCCESS",
@@ -174,7 +174,7 @@ export async function processEnrollmentRequest({ request_id, action = "APPROVE" 
                 .eq('institute_id', targetInst)
                 .eq('academic_year', '2026-27');
             }
-          } catch (capErr) {}
+          } catch {}
 
           // Record audit log
           try {
@@ -184,7 +184,7 @@ export async function processEnrollmentRequest({ request_id, action = "APPROVE" 
               p_record_id: enrollmentId,
               p_payload: { apaar_id: studentApaar, institute_id: targetInst, request_id }
             });
-          } catch (e) {}
+          } catch {}
 
           await supabase.from('requests').update({ state: newStatus }).eq('id', request_id);
 

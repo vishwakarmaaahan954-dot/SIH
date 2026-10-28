@@ -17,7 +17,7 @@ export async function getGrievances(apaarId = null) {
   try {
     const res = await fetch(`${API_BASE}/grievances`);
     if (res.ok) return await res.json();
-  } catch (e) {}
+  } catch {}
 
   return [];
 }
@@ -42,7 +42,7 @@ export async function fileGrievance({ apaar_id, issue }) {
             p_record_id: gId,
             p_payload: { apaar_id, issue }
           });
-        } catch (e) {}
+        } catch {}
         return data;
       }
     } catch (e) {
@@ -77,7 +77,7 @@ export async function resolveGrievance({ grievance_id, resolution, assigned_to =
             p_record_id: grievance_id,
             p_payload: { resolution }
           });
-        } catch (e) {}
+        } catch {}
         return data;
       }
     } catch (e) {

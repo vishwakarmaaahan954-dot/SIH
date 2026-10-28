@@ -4,7 +4,7 @@ import { DEMO_PERSONAS } from './authService';
 const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE) || "http://localhost:8000";
 const SECRET_KEY = "sih-2026-apaar-verify-secret-key-mock";
 
-export const DEFAULT_SCHEME_RULES = {
+const DEFAULT_SCHEME_RULES = {
   SCH_PRAGATI: {
     gender: "Female",
     max_family_income: 800000.0,
@@ -26,7 +26,7 @@ export const DEFAULT_SCHEME_RULES = {
   }
 };
 
-export const DEFAULT_PERSONA_ATTENDANCE = {
+const DEFAULT_PERSONA_ATTENDANCE = {
   "100000000001": 91.6,
   "100000000002": 62.5,
   "100000000003": 87.5,
@@ -37,13 +37,13 @@ export const DEFAULT_PERSONA_ATTENDANCE = {
   "100000000999": 45.0
 };
 
-export const FALLBACK_SCHEMES = [
+const FALLBACK_SCHEMES = [
   { id: 'SCH_PRAGATI', name: 'AICTE Pragati Scholarship for Girls', authority: 'AICTE', active: true },
   { id: 'SCH_POST_MATRIC', name: 'Central Post-Matric SC/ST Scheme', authority: 'Ministry of Social Justice', active: true },
   { id: 'SCH_MERIT_CUM', name: 'National Merit-Cum-Means Technical Grant', authority: 'AICTE / MoE', active: true }
 ];
 
-export const SCHEME_METADATA = {
+const SCHEME_METADATA = {
   SCH_PRAGATI: {
     amount: "₹50,000",
     frequency: "per annum",
@@ -296,13 +296,13 @@ export async function disburseScholarship({ apaar_id, scheme_id, eligibility_tok
 
         // Commit to claims_ledger
         const claimId = `CLM_${Date.now()}`;
-        const { data: claim, error: clmErr } = await supabase.from('claims_ledger').insert({
+        await supabase.from('claims_ledger').insert({
           id: claimId,
           apaar_id,
           scheme_id,
           status: 'DISBURSED',
           timestamp: new Date().toISOString()
-        }).select().single();
+        });
 
         // Audit log
         try {
@@ -312,7 +312,7 @@ export async function disburseScholarship({ apaar_id, scheme_id, eligibility_tok
             p_record_id: claimId,
             p_payload: { apaar_id, scheme_id, status: 'DISBURSED' }
           });
-        } catch (e) {}
+        } catch {}
 
         return {
           status: "SUCCESS",

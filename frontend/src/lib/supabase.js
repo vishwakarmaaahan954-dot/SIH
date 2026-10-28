@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : (typeof process !== 'undefined' && process.env ? process.env : {});
-const supabaseUrl = env.VITE_SUPABASE_URL || 'https://wdioyfgiodoggqelfmnm.supabase.co';
-const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkaW95Zmdpb2RvZ2dxZWxmbW5tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NTc1NDQsImV4cCI6MjEwODQzMzU0NH0.w7St9qk37Zo2QmuvXv0HoQYcnhkj31ZXpXbOYMW4Ns4';
+const supabaseUrl = env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || '';
 
 export const isSupabaseConfigured = Boolean(
   supabaseUrl && 
@@ -11,8 +11,12 @@ export const isSupabaseConfigured = Boolean(
   !supabaseAnonKey.includes('your-anon')
 );
 
+// Fallback dummy credentials to prevent createClient initialization errors if env is missing
+const clientUrl = isSupabaseConfigured ? supabaseUrl : 'https://placeholder.supabase.co';
+const clientKey = isSupabaseConfigured ? supabaseAnonKey : 'placeholder-anon-key';
+
 // Singleton Supabase Client
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(clientUrl, clientKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,

@@ -27,7 +27,7 @@ export async function getAuditLogs() {
   try {
     const res = await fetch(`${API_BASE}/audit/logs`);
     if (res.ok) return await res.json();
-  } catch (e) {}
+  } catch {}
 
   return [];
 }

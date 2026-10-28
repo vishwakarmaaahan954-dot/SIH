@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
-import { supabase, isSupabaseConfigured } from './lib/supabase';
 import {
   DEMO_PERSONAS,
   getSession,
@@ -57,12 +56,9 @@ function Guilloche({ size = 56, lines = 7, draw = false, check = false, classNam
 
 const iconProps = { width: 16, height: 16, viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true, style: { display: "inline-block", verticalAlign: "-3px", flex: "none" } };
 const IconCheck = () => <svg {...iconProps}><path d="m4 10.5 4 4 8-9" /></svg>;
-const IconCross = () => <svg {...iconProps}><path d="m5 5 10 10M15 5 5 15" /></svg>;
 const IconAlert = () => <svg {...iconProps}><path d="M10 3 18 17H2L10 3Z" /><path d="M10 8.5v4M10 14.8v.1" /></svg>;
 const IconLock = () => <svg {...iconProps}><rect x="4" y="9" width="12" height="8" rx="1.5" /><path d="M7 9V6.5a3 3 0 0 1 6 0V9" /></svg>;
 const IconScan = () => <svg {...iconProps}><path d="M3 7V4h3M14 4h3v3M17 13v3h-3M6 16H3v-3M3 10h14" /></svg>;
-const IconCamera = () => <svg {...iconProps}><path d="M3 7h3l1.5-2h5L14 7h3v9H3V7Z" /><circle cx="10" cy="11" r="2.8" /></svg>;
-const IconEdit = () => <svg {...iconProps}><path d="m4 16 .8-3.6L13.5 3.7l2.8 2.8-8.7 8.7L4 16Z" /></svg>;
 const IconRefresh = () => <svg {...iconProps}><path d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5V6h-2.5" /></svg>;
 
 function NavTab({ active, onClick, children }) {
@@ -139,14 +135,13 @@ export default function App() {
   const [scannerMode, setScannerMode] = useState("quick"); // "quick" | "camera" | "manual"
   const [scannerTargetStudent, setScannerTargetStudent] = useState("100000000001");
   const [scannerTokenInput, setScannerTokenInput] = useState("");
-  const [scannerInstitute, setScannerInstitute] = useState("INST_DEL_01");
+  const [scannerInstitute] = useState("INST_DEL_01");
   const [scanResult, setScanResult] = useState(null);
   const [cameraActive, setCameraActive] = useState(false);
   const cameraScannerRef = useRef(null);
 
   // Student Profile Data
   const [studentDetails, setStudentDetails] = useState(COMPREHENSIVE_STUDENT_DATA["100000000001"] || null);
-  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
 
   // 1. Initial Session Check & Auth State Subscription
   useEffect(() => {

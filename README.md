@@ -48,8 +48,8 @@ cp frontend/.env.example frontend/.env
 Contents of `frontend/.env`:
 ```env
 # Supabase Project Configuration
-VITE_SUPABASE_URL=https://wdioyfgiodoggqelfmnm.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkaW95Zmdpb2RvZ2dxZWxmbW5tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NTc1NDQsImV4cCI6MjEwODQzMzU0NH0.w7St9qk37Zo2QmuvXv0HoQYcnhkj31ZXpXbOYMW4Ns4
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-or-publishable-key
 
 # Optional Backend Core API Gateway
 VITE_API_BASE=http://localhost:8000
