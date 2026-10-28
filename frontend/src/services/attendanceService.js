@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const rawApiBase = import.meta.env.VITE_API_BASE || "https://sih-9phl.onrender.com";
+const API_BASE = rawApiBase.replace(/\/+$/, "");
 const SECRET_KEY = "sih-2026-apaar-verify-secret-key-mock";
 
 // Helper: crypto SHA256 & HMAC in browser

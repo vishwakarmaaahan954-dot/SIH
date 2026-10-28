@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const rawApiBase = import.meta.env.VITE_API_BASE || "https://sih-9phl.onrender.com";
+const API_BASE = rawApiBase.replace(/\/+$/, "");
 
 const FALLBACK_INSTITUTES = [
   { id: "INST_DEL_01", aicte_code: "1-1001", name: "Delhi Engineering & Technology Institute", state: "Delhi" },

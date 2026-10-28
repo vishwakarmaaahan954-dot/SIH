@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const rawApiBase = import.meta.env.VITE_API_BASE || "https://sih-9phl.onrender.com";
+const API_BASE = rawApiBase.replace(/\/+$/, "");
 
 export async function getEnrollmentRequests(instituteId = null) {
   if (isSupabaseConfigured) {

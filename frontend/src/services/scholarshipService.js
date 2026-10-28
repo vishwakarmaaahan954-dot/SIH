@@ -1,7 +1,8 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { DEMO_PERSONAS } from './authService';
 
-const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE) || "http://localhost:8000";
+const rawApiBase = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE) || "https://sih-9phl.onrender.com";
+const API_BASE = rawApiBase.replace(/\/+$/, "");
 const SECRET_KEY = "sih-2026-apaar-verify-secret-key-mock";
 
 const DEFAULT_SCHEME_RULES = {
