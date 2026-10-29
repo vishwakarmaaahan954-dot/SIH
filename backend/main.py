@@ -3,12 +3,13 @@ import hmac
 import json
 import time
 import uuid
-from datetime import datetime, date, timedelta
-from typing import List, Optional, Dict, Any
+from datetime import datetime, date
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Depends, Query, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import sqlite3
 
 DATABASE_PATH = "apaar_verify.db"
@@ -24,16 +25,50 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc: HTTPException):
+    if isinstance(exc.detail, dict):
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+@app.exception_handler(sqlite3.IntegrityError)
+async def integrity_error_handler(request, exc: sqlite3.IntegrityError):
+    err_str = str(exc)
+    if "enrollments.apaar_id" in err_str or "idx_active_enrollment" in err_str:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "DUPLICATE_ENROLLMENT", "detail": "Student already has an active enrollment."}
+        )
+    return JSONResponse(
+        status_code=400,
+        content={"error": "INTEGRITY_ERROR", "detail": err_str}
+    )
+
+@app.exception_handler(sqlite3.OperationalError)
+async def operational_error_handler(request, exc: sqlite3.OperationalError):
+    err_str = str(exc)
+    if "locked" in err_str or "busy" in err_str:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "CONCURRENCY_CONFLICT", "detail": "Database busy under concurrent operations; please retry."}
+        )
+    return JSONResponse(
+        status_code=400,
+        content={"error": "OPERATIONAL_ERROR", "detail": err_str}
+    )
+
+
 def get_db():
-    conn = sqlite3.connect(DATABASE_PATH, timeout=10.0, check_same_thread=False)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=20.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA busy_timeout = 20000;")
     try:
         yield conn
     finally:
@@ -41,6 +76,7 @@ def get_db():
 
 def init_db():
     conn = sqlite3.connect(DATABASE_PATH)
+    conn.execute("PRAGMA journal_mode = WAL;")
     cursor = conn.cursor()
     cursor.executescript("""
     CREATE TABLE IF NOT EXISTS students (
@@ -52,7 +88,9 @@ def init_db():
         domicile TEXT NOT NULL,
         prior_qualification TEXT NOT NULL,
         family_income REAL NOT NULL,
-        consent INTEGER DEFAULT 0
+        consent INTEGER DEFAULT 0,
+        enrollment_status TEXT NOT NULL DEFAULT 'UNENROLLED',
+        institute_id TEXT REFERENCES institutions(id)
     );
 
     CREATE TABLE IF NOT EXISTS institutions (
@@ -71,6 +109,7 @@ def init_db():
         faculty_fte INTEGER NOT NULL,
         lateral_seats INTEGER NOT NULL,
         verified_students INTEGER DEFAULT 0,
+        available_seats INTEGER DEFAULT 0,
         FOREIGN KEY (institute_id) REFERENCES institutions(id),
         UNIQUE (institute_id, program, academic_year)
     );
@@ -208,6 +247,26 @@ def init_db():
         used_at TEXT NOT NULL
     );
     """)
+
+    # Safe migrations for existing databases
+    try:
+        cursor.execute("ALTER TABLE students ADD COLUMN enrollment_status TEXT NOT NULL DEFAULT 'UNENROLLED';")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE students ADD COLUMN institute_id TEXT REFERENCES institutions(id);")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE capacity ADD COLUMN available_seats INTEGER DEFAULT 0;")
+    except sqlite3.OperationalError:
+        pass
+
+    # Synchronize capacity available_seats = MAX(0, sanctioned_intake - verified_students)
+    cursor.execute("UPDATE capacity SET available_seats = MAX(0, sanctioned_intake - verified_students);")
+
     conn.commit()
     conn.close()
 
@@ -228,6 +287,7 @@ def append_audit_event(conn: sqlite3.Connection, actor: str, action: str, record
         "INSERT INTO audit_log (actor, action, record_id, payload, prev_hash, hash, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (actor, action, record_id, payload_str, prev_hash, current_hash, ts)
     )
+    conn.commit()
 
 # ---------------- MOCK ADAPTERS ----------------
 
@@ -445,18 +505,126 @@ def login(req: LoginRequest, db: sqlite3.Connection = Depends(get_db)):
 def get_institutions(db: sqlite3.Connection = Depends(get_db)):
     cursor = db.cursor()
     cursor.execute("""
-    SELECT i.id, i.aicte_code, i.name, i.state, c.program, c.sanctioned_intake, c.faculty_fte, c.lateral_seats, c.verified_students
+    SELECT i.id, i.aicte_code, i.name, i.state, c.program, c.sanctioned_intake, c.faculty_fte, c.lateral_seats, c.verified_students, c.academic_year
     FROM institutions i
     LEFT JOIN capacity c ON i.id = c.institute_id
     """)
     rows = cursor.fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        sanctioned = d.get("sanctioned_intake") or 0
+        verified = d.get("verified_students") or 0
+        available = max(0, sanctioned - verified)
+        d["available_seats"] = available
+        d["empty_seats"] = available
+        d["is_full"] = (available <= 0)
+        result.append(d)
+    return result
+
+@app.get("/institutions/{institute_id}/seats")
+def get_institute_seats(
+    institute_id: str,
+    program: Optional[str] = Query("B.Tech"),
+    academic_year: Optional[str] = Query("2026-27"),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM institutions WHERE id = ?", (institute_id,))
+    inst = cursor.fetchone()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Institution not found")
+
+    cursor.execute("""
+        SELECT * FROM capacity
+        WHERE institute_id = ? AND program = ? AND academic_year = ?
+    """, (institute_id, program, academic_year))
+    cap = cursor.fetchone()
+    if not cap:
+        cursor.execute("SELECT * FROM capacity WHERE institute_id = ? AND program = ?", (institute_id, program))
+        cap = cursor.fetchone()
+
+    if not cap:
+        raise HTTPException(status_code=404, detail=f"Capacity record not found for institution {institute_id} program {program}")
+
+    sanctioned = cap["sanctioned_intake"]
+    verified = cap["verified_students"]
+    available_seats = max(0, sanctioned - verified)
+    is_full = (available_seats <= 0)
+
+    return {
+        "institute_id": institute_id,
+        "institute_name": inst["name"],
+        "program": cap["program"],
+        "academic_year": cap["academic_year"],
+        "sanctioned_intake": sanctioned,
+        "verified_students": verified,
+        "available_seats": available_seats,
+        "empty_seats": available_seats,
+        "is_full": is_full
+    }
 
 @app.get("/students")
 def get_all_students(db: sqlite3.Connection = Depends(get_db)):
     cursor = db.cursor()
-    cursor.execute("SELECT apaar_id, name, dob, category, gender, domicile, prior_qualification, family_income, consent FROM students")
+    cursor.execute("SELECT apaar_id, name, dob, category, gender, domicile, prior_qualification, family_income, consent, enrollment_status, institute_id FROM students")
     return [dict(r) for r in cursor.fetchall()]
+
+@app.get("/students/{apaar_id}/status")
+@app.get("/students/{apaar_id}/enrollment-status")
+def get_student_enrollment_status(apaar_id: str, db: sqlite3.Connection = Depends(get_db)):
+    cursor = db.cursor()
+    cursor.execute("""
+        SELECT s.*, i.name as affiliated_institute_name
+        FROM students s
+        LEFT JOIN institutions i ON s.institute_id = i.id
+        WHERE s.apaar_id = ?
+    """, (apaar_id,))
+    student = cursor.fetchone()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student APAAR record not found")
+
+    status = student["enrollment_status"] or "UNENROLLED"
+    inst_id = student["institute_id"]
+    inst_name = student["affiliated_institute_name"]
+
+    # If student record is UNENROLLED, verify whether an active enrollment exists in enrollments table
+    if status != "ACTIVE":
+        cursor.execute("""
+            SELECT e.*, i.name as active_institute_name
+            FROM enrollments e
+            JOIN institutions i ON e.institute_id = i.id
+            WHERE e.apaar_id = ? AND e.status = 'ACTIVE'
+        """, (apaar_id,))
+        enr = cursor.fetchone()
+        if enr:
+            status = "ACTIVE"
+            inst_id = enr["institute_id"]
+            inst_name = enr["active_institute_name"]
+
+    is_eligible = (status == "UNENROLLED")
+
+    if is_eligible:
+        message = "Student is unenrolled and eligible to submit admission requests."
+    elif status == "ACTIVE":
+        message = f"Student currently has an ACTIVE enrollment at {inst_name or inst_id}."
+    elif status == "FLAGGED":
+        message = "Student record is FLAGGED due to identity or demographic mismatch."
+    elif status == "UNVERIFIED":
+        message = "Student APAAR ID is UNVERIFIED."
+    else:
+        message = f"Student status is {status}."
+
+    return {
+        "apaar_id": student["apaar_id"],
+        "name": student["name"],
+        "enrollment_status": status,
+        "status": status,
+        "is_eligible_for_admission": is_eligible,
+        "institute_id": inst_id,
+        "institute_name": inst_name,
+        "message": message
+    }
 
 @app.get("/students/{apaar_id}")
 def get_student_details(apaar_id: str, db: sqlite3.Connection = Depends(get_db)):
@@ -501,187 +669,350 @@ class JoinRequestPayload(BaseModel):
     type: str = "join" # join, lateral, transfer, exit, reentry
     target_institute_id: Optional[str] = None
 
-@app.post("/enrollment/request")
-def create_enrollment_request(data: JoinRequestPayload, db: sqlite3.Connection = Depends(get_db)):
+def handle_admission_or_enrollment_request(data: JoinRequestPayload, db: sqlite3.Connection, is_admission_endpoint: bool = False):
     cursor = db.cursor()
     cursor.execute("SELECT * FROM students WHERE apaar_id = ?", (data.apaar_id,))
     student = cursor.fetchone()
     if not student:
         raise HTTPException(status_code=404, detail="Student APAAR record not found")
 
+    dest_inst_id = data.target_institute_id or data.institute_id
+    cursor.execute("SELECT * FROM institutions WHERE id = ?", (dest_inst_id,))
+    inst = cursor.fetchone()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Target institution not found")
+
+    # Determine student's effective enrollment status
+    student_status = student["enrollment_status"] or "UNENROLLED"
+    cursor.execute("SELECT * FROM enrollments WHERE apaar_id = ? AND status = 'ACTIVE'", (data.apaar_id,))
+    active_enr = cursor.fetchone()
+    if active_enr:
+        student_status = "ACTIVE"
+
+    # Capacity Check on target institute:
+    cursor.execute("SELECT * FROM capacity WHERE institute_id = ? AND program = ?", (dest_inst_id, data.program))
+    cap = cursor.fetchone()
+    if cap is None:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "PROGRAM_NOT_OFFERED", "detail": "Requested program is not offered by this institute."}
+        )
+
+    sanctioned = cap["sanctioned_intake"]
+    verified = cap["verified_students"]
+    available_seats = max(0, sanctioned - verified)
+    if available_seats <= 0 or verified >= sanctioned:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "SEATS_FULL", "detail": "Cannot submit admission request: Institute seats are full."}
+        )
+
+    # Eligibility Check:
+    # Admission requests require UNENROLLED status.
+    # Enforced for /admission/request, data.type == "admission", or standard year 1 join admission.
+    is_admission_request = is_admission_endpoint or data.type == "admission" or (data.type == "join" and data.year == 1)
+    if is_admission_request:
+        if student_status != "UNENROLLED":
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "INELIGIBLE_FOR_ADMISSION", "detail": "Admission request rejected: Student status is not UNENROLLED."}
+            )
+    else:
+        if student_status in ["FLAGGED", "UNVERIFIED"]:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "INELIGIBLE_FOR_ADMISSION", "detail": "Admission request rejected: Student status is not UNENROLLED."}
+            )
+
     req_id = str(uuid.uuid4())
     ts = datetime.utcnow().isoformat()
 
     cursor.execute(
         "INSERT INTO requests (id, type, apaar_id, from_inst, to_inst, program, year, state, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?, ?)",
-        (req_id, data.type, data.apaar_id, data.institute_id, data.target_institute_id or data.institute_id, data.program, data.year, json.dumps(data.dict()), ts)
+        (req_id, data.type, data.apaar_id, data.institute_id, dest_inst_id, data.program, data.year, json.dumps(data.dict()), ts)
     )
-    db.commit()
     append_audit_event(db, data.apaar_id, f"ENROLLMENT_REQUEST_{data.type.upper()}", req_id, data.dict())
-    return {"status": "SUCCESS", "request_id": req_id, "state": "SUBMITTED", "message": f"{data.type.capitalize()} request created and submitted to institute queue."}
+    db.commit()
+    return {
+        "status": "SUCCESS",
+        "request_id": req_id,
+        "state": "SUBMITTED",
+        "message": f"{data.type.capitalize()} request created and submitted to institute queue."
+    }
+
+@app.post("/enrollment/request")
+def create_enrollment_request(data: JoinRequestPayload, db: sqlite3.Connection = Depends(get_db)):
+    return handle_admission_or_enrollment_request(data, db, is_admission_endpoint=False)
+
+@app.post("/admission/request")
+def create_admission_request(data: JoinRequestPayload, db: sqlite3.Connection = Depends(get_db)):
+    return handle_admission_or_enrollment_request(data, db, is_admission_endpoint=True)
 
 @app.get("/enrollment/requests")
-def list_enrollment_requests(institute_id: Optional[str] = None, apaar_id: Optional[str] = None, db: sqlite3.Connection = Depends(get_db)):
+@app.get("/admission/requests")
+def list_enrollment_requests(
+    institute_id: Optional[str] = None,
+    apaar_id: Optional[str] = None,
+    state: Optional[str] = None,
+    db: sqlite3.Connection = Depends(get_db)
+):
     cursor = db.cursor()
     query = """
     SELECT r.*, s.name as student_name, s.prior_qualification, s.dob, s.category, s.gender,
            i1.name as from_inst_name, i2.name as to_inst_name
     FROM requests r
-    JOIN students s ON r.apaar_id = s.apaar_id
+    LEFT JOIN students s ON r.apaar_id = s.apaar_id
     LEFT JOIN institutions i1 ON r.from_inst = i1.id
     LEFT JOIN institutions i2 ON r.to_inst = i2.id
     WHERE 1=1
     """
     params = []
-    if institute_id:
+    if institute_id and institute_id.strip() and institute_id not in ["undefined", "null", "all"]:
         query += " AND (r.to_inst = ? OR r.from_inst = ?)"
-        params.extend([institute_id, institute_id])
-    if apaar_id:
+        params.extend([institute_id.strip(), institute_id.strip()])
+    if apaar_id and apaar_id.strip() and apaar_id not in ["undefined", "null"]:
         query += " AND r.apaar_id = ?"
-        params.append(apaar_id)
+        params.append(apaar_id.strip())
+    if state and state.strip() and state not in ["undefined", "null", "ALL"]:
+        query += " AND r.state = ?"
+        params.append(state.strip())
 
     query += " ORDER BY r.created_at DESC"
     cursor.execute(query, tuple(params))
-    return [dict(r) for r in cursor.fetchall()]
+    rows = cursor.fetchall()
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        dest_inst_id = d.get("to_inst") or d.get("from_inst")
+        dest_inst_name = d.get("to_inst_name") or d.get("from_inst_name")
+        program = d.get("program") or "B.Tech"
+
+        cursor.execute("SELECT * FROM capacity WHERE institute_id = ? AND program = ?", (dest_inst_id, program))
+        cap = cursor.fetchone()
+        if cap:
+            avail = max(0, cap["sanctioned_intake"] - cap["verified_students"])
+        else:
+            avail = 0
+
+        d["institute_id"] = dest_inst_id
+        d["institute_name"] = dest_inst_name
+        d["institute_available_seats"] = avail
+        d["available_seats"] = avail
+        d["can_accept"] = bool(d.get("state") == "SUBMITTED" and avail > 0)
+        d["request_id"] = d.get("id") or d.get("request_id")
+        results.append(d)
+
+    return results
 
 class ProcessRequestPayload(BaseModel):
     request_id: str
-    action: str # APPROVE or REJECT
+    action: Optional[str] = "APPROVE" # APPROVE or REJECT
     rejection_reason: Optional[str] = None
 
 @app.post("/enrollment/process-request")
+@app.post("/admission/accept")
 def process_enrollment_request(data: ProcessRequestPayload, db: sqlite3.Connection = Depends(get_db)):
-    cursor = db.cursor()
-    cursor.execute("SELECT * FROM requests WHERE id = ?", (data.request_id,))
-    req = cursor.fetchone()
-    if not req:
-        raise HTTPException(status_code=404, detail="Request not found")
-    if req["state"] in ["APPROVED", "REJECTED"]:
-        raise HTTPException(status_code=400, detail=f"Request already processed with status {req['state']}")
-
-    apaar_id = req["apaar_id"]
-    dest_inst_id = req["to_inst"]
-    program = req["program"]
-    req_type = req["type"]
-
-    if data.action == "REJECT":
-        cursor.execute("UPDATE requests SET state = 'REJECTED' WHERE id = ?", (data.request_id,))
-        db.commit()
-        append_audit_event(db, dest_inst_id, "REQUEST_REJECTED", data.request_id, {"reason": data.rejection_reason})
-        return {"status": "REJECTED", "message": "Request marked as rejected"}
-
-    # APPROVE PATH: Enforce 5 Hard Gates in ONE Transaction
-    cursor.execute("SELECT * FROM students WHERE apaar_id = ?", (apaar_id,))
-    student = cursor.fetchone()
-
-    # Gate A: Duplicate Active Admission Check
-    cursor.execute("SELECT * FROM enrollments WHERE apaar_id = ? AND status = 'ACTIVE'", (apaar_id,))
-    active_enr = cursor.fetchone()
-    if active_enr and req_type != "transfer":
-        raise HTTPException(
-            status_code=409,
-            detail=f"DUPLICATE ENROLLMENT REJECTED: Student already has an ACTIVE enrollment at Institute {active_enr['institute_id']}. Multi-college dual active admissions are strictly prohibited under AICTE norms."
-        )
-
-    # Gate B: APAAR & Name/DOB Demographic Verification
-    apaar_ver = MockAPAARAdapter.verify_identity(apaar_id, student["name"], student["dob"])
-    if not apaar_ver["verified"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"APAAR IDENTITY MISMATCH: {apaar_ver.get('reason')}. Diverted to manual officer review."
-        )
-
-    # Gate C: Lateral Entry Qualification Check
-    if req_type == "lateral":
-        if "diploma" not in student["prior_qualification"].lower():
+    try:
+        try:
+            db.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError:
+            pass
+        cursor = db.cursor()
+        cursor.execute("SELECT * FROM requests WHERE id = ?", (data.request_id,))
+        req = cursor.fetchone()
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found")
+        if req["state"] in ["APPROVED", "REJECTED"]:
             raise HTTPException(
                 status_code=400,
-                detail=f"LATERAL ELIGIBILITY FAILED: Prior qualification is '{student['prior_qualification']}'. NEP AICTE norms require a recognized Polytechnic/Technical Diploma for Year-2 Lateral Entry."
+                detail={"error": "ALREADY_PROCESSED", "detail": f"Request already processed with status {req['state']}"}
             )
 
-    # Gate D & E: Capacity hard cap & Faculty-Student Ratio Check
-    cursor.execute("SELECT * FROM capacity WHERE institute_id = ? AND program = ?", (dest_inst_id, program))
-    cap = cursor.fetchone()
-    if not cap:
-        raise HTTPException(status_code=404, detail="Institution program capacity record not found")
+        apaar_id = req["apaar_id"]
+        dest_inst_id = req["to_inst"]
+        program = req["program"]
+        req_type = req["type"]
+        action = (data.action or "APPROVE").upper()
 
-    new_verified = cap["verified_students"] + 1
-    sanctioned = cap["sanctioned_intake"]
-    faculty_fte = max(1, cap["faculty_fte"])
+        if action == "REJECT":
+            cursor.execute(
+                "UPDATE requests SET state = 'REJECTED' WHERE id = ? AND state = 'SUBMITTED'",
+                (data.request_id,)
+            )
+            if cursor.rowcount == 0:
+                cursor.execute("SELECT state FROM requests WHERE id = ?", (data.request_id,))
+                curr = cursor.fetchone()
+                curr_state = curr["state"] if curr else "UNKNOWN"
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": "ALREADY_PROCESSED", "detail": f"Request already processed with status {curr_state}"}
+                )
+            append_audit_event(db, dest_inst_id, "REQUEST_REJECTED", data.request_id, {"reason": data.rejection_reason})
+            db.commit()
+            return {"status": "REJECTED", "message": "Request marked as rejected"}
 
-    # Hard cap check
-    if new_verified > sanctioned:
-        # Find alternatives
-        cursor.execute("""
-        SELECT i.name, c.institute_id, (c.sanctioned_intake - c.verified_students) as vacant
-        FROM capacity c
-        JOIN institutions i ON c.institute_id = i.id
-        WHERE c.program = ? AND (c.sanctioned_intake - c.verified_students) > 0
-        LIMIT 3
-        """, (program,))
-        alternatives = [dict(r) for r in cursor.fetchall()]
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "SANCTIONED_INTAKE_EXCEEDED",
-                "message": f"Hard cap breach: Verified admissions ({new_verified}) exceeds sanctioned intake ({sanctioned}).",
-                "alternative_institutions_with_vacancies": alternatives
-            }
+        # APPROVE PATH: Enforce Hard Gates in ONE Atomic Operation
+        cursor.execute("SELECT * FROM students WHERE apaar_id = ?", (apaar_id,))
+        student = cursor.fetchone()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student record not found")
+
+        # Gate A: Duplicate Active Admission Check
+        cursor.execute("SELECT * FROM enrollments WHERE apaar_id = ? AND status = 'ACTIVE'", (apaar_id,))
+        active_enr = cursor.fetchone()
+        if active_enr and req_type != "transfer":
+            raise HTTPException(
+                status_code=409,
+                detail=f"DUPLICATE ENROLLMENT REJECTED: Student already has an ACTIVE enrollment at Institute {active_enr['institute_id']}. Multi-college dual active admissions are strictly prohibited under AICTE norms."
+            )
+
+        # Gate B: APAAR & Name/DOB Demographic Verification
+        apaar_ver = MockAPAARAdapter.verify_identity(apaar_id, student["name"], student["dob"])
+        if not apaar_ver["verified"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"APAAR IDENTITY MISMATCH: {apaar_ver.get('reason')}. Diverted to manual officer review."
+            )
+
+        # Gate C: Lateral Entry Qualification Check
+        if req_type == "lateral":
+            if "diploma" not in (student["prior_qualification"] or "").lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"LATERAL ELIGIBILITY FAILED: Prior qualification is '{student['prior_qualification']}'. NEP AICTE norms require a recognized Polytechnic/Technical Diploma for Year-2 Lateral Entry."
+                )
+
+        # Gate D: Capacity hard cap Check
+        cursor.execute("SELECT * FROM capacity WHERE institute_id = ? AND program = ?", (dest_inst_id, program))
+        cap = cursor.fetchone()
+        if not cap:
+            raise HTTPException(status_code=404, detail="Institution program capacity record not found")
+
+        sanctioned = cap["sanctioned_intake"]
+        verified = cap["verified_students"]
+        available_seats = max(0, sanctioned - verified)
+        new_verified = verified + 1
+
+        if available_seats <= 0 or verified >= sanctioned or new_verified > sanctioned:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "SEATS_FULL", "detail": "Cannot accept request: Institute seats are full."}
+            )
+
+        # Gate E: Faculty-Student Ratio Check
+        faculty_fte = max(1, cap["faculty_fte"])
+        cursor.execute("SELECT value_json FROM configurable_rules WHERE key = 'ratio_limits'")
+        rules_row = cursor.fetchone()
+        ratio_limits = json.loads(rules_row["value_json"]) if rules_row else {}
+        max_ratio = float(ratio_limits.get(program, 20.0))
+        projected_ratio = new_verified / faculty_fte
+        if projected_ratio > max_ratio:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "FACULTY_RATIO_BREACH",
+                    "message": f"Admission would breach AICTE faculty-student ratio limit ({projected_ratio:.2f}:1 exceeds max permitted {max_ratio}:1 with {faculty_fte} FTE faculty).",
+                }
+            )
+
+        # Atomic Conditional Update for Request State
+        cursor.execute(
+            "UPDATE requests SET state = 'APPROVED' WHERE id = ? AND state = 'SUBMITTED'",
+            (data.request_id,)
+        )
+        if cursor.rowcount == 0:
+            cursor.execute("SELECT state FROM requests WHERE id = ?", (data.request_id,))
+            curr = cursor.fetchone()
+            curr_state = curr["state"] if curr else "UNKNOWN"
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "ALREADY_PROCESSED", "detail": f"Request already processed with status {curr_state}"}
+            )
+
+        # Atomic Conditional Update for Capacity
+        cursor.execute(
+            "UPDATE capacity SET verified_students = verified_students + 1, available_seats = available_seats - 1 WHERE id = ? AND available_seats > 0",
+            (cap["id"],)
+        )
+        if cursor.rowcount == 0:
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "SEATS_FULL", "detail": "Cannot accept request: Institute seats are full."}
+            )
+
+        # Fetch updated capacity counts
+        cursor.execute("SELECT verified_students, available_seats FROM capacity WHERE id = ?", (cap["id"],))
+        updated_cap = cursor.fetchone()
+        new_verified = updated_cap["verified_students"]
+        new_available = updated_cap["available_seats"]
+
+        today_str = date.today().isoformat()
+
+        # If Transfer, close old enrollment atomically
+        if req_type == "transfer":
+            if active_enr:
+                cursor.execute("UPDATE enrollments SET status = 'TRANSFERRED_OUT', end_date = ? WHERE id = ?", (today_str, active_enr["id"]))
+                cursor.execute("UPDATE capacity SET verified_students = MAX(0, verified_students - 1), available_seats = available_seats + 1 WHERE institute_id = ? AND program = ?", (active_enr["institute_id"], active_enr["program"]))
+                append_audit_event(db, dest_inst_id, "ENROLLMENT_TRANSFERRED_OUT", active_enr["id"], {"from": active_enr["institute_id"], "to": dest_inst_id})
+
+        # Create new ACTIVE enrollment
+        new_enr_id = str(uuid.uuid4())
+        year_level = 2 if req_type == "lateral" else req["year"]
+        cursor.execute(
+            "INSERT INTO enrollments (id, apaar_id, institute_id, program, year, entry_type, status, start_date) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)",
+            (new_enr_id, apaar_id, dest_inst_id, program, year_level, req_type if req_type in ['regular', 'lateral', 'transfer'] else 'regular', today_str)
         )
 
-    # Ratio check
-    cursor.execute("SELECT value_json FROM configurable_rules WHERE key = 'ratio_limits'")
-    ratio_limits = json.loads(cursor.fetchone()["value_json"])
-    max_ratio = float(ratio_limits.get(program, 20.0))
-    projected_ratio = new_verified / faculty_fte
-    if projected_ratio > max_ratio:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "FACULTY_RATIO_BREACH",
-                "message": f"Admission would breach AICTE faculty-student ratio limit ({projected_ratio:.2f}:1 exceeds max permitted {max_ratio}:1 with {faculty_fte} FTE faculty).",
-            }
+        # Update students table: enrollment_status = 'ACTIVE', institute_id = :target_inst
+        cursor.execute(
+            "UPDATE students SET enrollment_status = 'ACTIVE', institute_id = ? WHERE apaar_id = ?",
+            (dest_inst_id, apaar_id)
         )
 
-    # All Gates Passed: Execute State Transitions
-    today_str = date.today().isoformat()
+        append_audit_event(db, dest_inst_id, "ENROLLMENT_ACTIVATED", new_enr_id, {
+            "apaar_id": apaar_id,
+            "institute_id": dest_inst_id,
+            "entry_type": req_type,
+            "new_verified_count": new_verified,
+            "remaining_available_seats": new_available
+        })
+        db.commit()
 
-    # If Transfer, close old enrollment atomically
-    if req_type == "transfer":
-        if active_enr:
-            cursor.execute("UPDATE enrollments SET status = 'TRANSFERRED_OUT', end_date = ? WHERE id = ?", (today_str, active_enr["id"]))
-            # Decrement old institute counter
-            cursor.execute("UPDATE capacity SET verified_students = MAX(0, verified_students - 1) WHERE institute_id = ? AND program = ?", (active_enr["institute_id"], active_enr["program"]))
-            append_audit_event(db, dest_inst_id, "ENROLLMENT_TRANSFERRED_OUT", active_enr["id"], {"from": active_enr["institute_id"], "to": dest_inst_id})
+        return {
+            "status": "APPROVED",
+            "message": "Admission request accepted successfully. Student enrollment is now ACTIVE and institute affiliation updated.",
+            "enrollment_id": new_enr_id,
+            "student_status": "ACTIVE",
+            "affiliated_institute_id": dest_inst_id,
+            "remaining_available_seats": new_available,
+            "verified_students_count": new_verified,
+            "new_intake_count": new_verified
+        }
 
-    # Create new ACTIVE enrollment
-    new_enr_id = str(uuid.uuid4())
-    year_level = 2 if req_type == "lateral" else req["year"]
-    cursor.execute(
-        "INSERT INTO enrollments (id, apaar_id, institute_id, program, year, entry_type, status, start_date) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)",
-        (new_enr_id, apaar_id, dest_inst_id, program, year_level, req_type if req_type in ['regular', 'lateral', 'transfer'] else 'regular', today_str)
-    )
-
-    # Increment destination institute counter
-    cursor.execute("UPDATE capacity SET verified_students = verified_students + 1 WHERE id = ?", (cap["id"],))
-
-    # Update request state to APPROVED
-    cursor.execute("UPDATE requests SET state = 'APPROVED' WHERE id = ?", (data.request_id,))
-
-    db.commit()
-    append_audit_event(db, dest_inst_id, "ENROLLMENT_ACTIVATED", new_enr_id, {
-        "apaar_id": apaar_id,
-        "institute_id": dest_inst_id,
-        "entry_type": req_type,
-        "new_verified_count": new_verified
-    })
-
-    return {
-        "status": "APPROVED",
-        "message": "Enrollment verified and activated. Personal attendance QR token unlocked.",
-        "enrollment_id": new_enr_id,
-        "new_intake_count": new_verified
-    }
+    except HTTPException:
+        raise
+    except sqlite3.IntegrityError as e:
+        db.rollback()
+        err_str = str(e)
+        if "enrollments.apaar_id" in err_str or "idx_active_enrollment" in err_str:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "DUPLICATE_ENROLLMENT", "detail": "Student already has an ACTIVE enrollment."}
+            )
+        raise HTTPException(status_code=400, detail={"error": "INTEGRITY_ERROR", "detail": err_str})
+    except sqlite3.OperationalError as e:
+        db.rollback()
+        err_str = str(e)
+        if "locked" in err_str or "busy" in err_str:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "CONCURRENCY_CONFLICT", "detail": "Database busy under concurrent operations; please retry."}
+            )
+        raise HTTPException(status_code=400, detail={"error": "OPERATIONAL_ERROR", "detail": err_str})
 
 # ---------------- QR ATTENDANCE ENGINE ----------------
 

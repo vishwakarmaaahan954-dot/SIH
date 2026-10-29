@@ -41,21 +41,24 @@ def seed_master_data():
         ("INST_UP_02", "1-1002", "National Institute of Applied Sciences", "Uttar Pradesh"),
         ("INST_KA_03", "1-1003", "Bangalore College of Advanced Computing", "Karnataka"),
         ("INST_MH_04", "1-1004", "Maharashtra Institute of Information Tech", "Maharashtra"),
-        ("INST_TN_05", "1-1005", "Chennai Autonomous Engineering College", "Tamil Nadu")
+        ("INST_TN_05", "1-1005", "Chennai Autonomous Engineering College", "Tamil Nadu"),
+        ("INST_FULL_06", "1-1006", "Apex Institute of Advanced Engineering", "Maharashtra")
     ]
     cursor.executemany("INSERT INTO institutions VALUES (?, ?, ?, ?)", institutions)
 
     # 3. Capacity
     # Note: INST_UP_02 is configured with intentional faculty-student ratio violation (Scenario 6)
     # INST_TN_05 is configured with intentional under-filling (<40% occupancy)
+    # INST_FULL_06 is configured at 100% capacity with 0 available seats
     capacities = [
-        ("CAP_01", "INST_DEL_01", "B.Tech", "2026-27", 120, 8, 12, 118),
-        ("CAP_02", "INST_UP_02", "B.Tech", "2026-27", 100, 3, 10, 95), # Ratio: 95/3 = 31.6:1 (Breach > 20)
-        ("CAP_03", "INST_KA_03", "B.Tech", "2026-27", 60, 5, 6, 45),
-        ("CAP_04", "INST_MH_04", "B.Tech", "2026-27", 120, 10, 12, 100),
-        ("CAP_05", "INST_TN_05", "B.Tech", "2026-27", 100, 6, 10, 20), # Occupancy: 20% (Under-filled)
+        ("CAP_01", "INST_DEL_01", "B.Tech", "2026-27", 120, 8, 12, 118, 2),
+        ("CAP_02", "INST_UP_02", "B.Tech", "2026-27", 100, 3, 10, 95, 5), # Ratio: 95/3 = 31.6:1 (Breach > 20)
+        ("CAP_03", "INST_KA_03", "B.Tech", "2026-27", 60, 5, 6, 45, 15),
+        ("CAP_04", "INST_MH_04", "B.Tech", "2026-27", 120, 10, 12, 100, 20),
+        ("CAP_05", "INST_TN_05", "B.Tech", "2026-27", 100, 6, 10, 20, 80), # Occupancy: 20% (Under-filled)
+        ("CAP_06", "INST_FULL_06", "B.Tech", "2026-27", 50, 10, 5, 50, 0), # 100% full capacity
     ]
-    cursor.executemany("INSERT INTO capacity VALUES (?, ?, ?, ?, ?, ?, ?, ?)", capacities)
+    cursor.executemany("INSERT INTO capacity (id, institute_id, program, academic_year, sanctioned_intake, faculty_fte, lateral_seats, verified_students, available_seats) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", capacities)
 
     # 4. Schemes & Rule Definitions
     schemes = [
@@ -94,31 +97,32 @@ def seed_master_data():
     # 5. Students (Deterministic Test Personas)
     students = [
         # Scenario 1 & 8: High-performing, fully eligible girl student
-        ("100000000001", "Priya Sharma", "2005-04-12", "General", "Female", "Delhi", "Class XII Science", 450000.0, 1),
+        ("100000000001", "Priya Sharma", "2005-04-12", "General", "Female", "Delhi", "Class XII Science", 450000.0, 1, "ACTIVE", "INST_DEL_01"),
         # Scenario 8: Low attendance (62%)
-        ("100000000002", "Rohan Verma", "2004-09-21", "OBC", "Male", "Uttar Pradesh", "Class XII Science", 320000.0, 1),
+        ("100000000002", "Rohan Verma", "2004-09-21", "OBC", "Male", "Uttar Pradesh", "Class XII Science", 320000.0, 1, "ACTIVE", "INST_DEL_01"),
         # Scenario 8: High family income (INR 1,200,000)
-        ("100000000003", "Ananya Deshmukh", "2005-01-15", "General", "Female", "Maharashtra", "Class XII Science", 1200000.0, 1),
+        ("100000000003", "Ananya Deshmukh", "2005-01-15", "General", "Female", "Maharashtra", "Class XII Science", 1200000.0, 1, "ACTIVE", "INST_MH_04"),
         # Scenario 3: Lateral Entry Diploma Candidate
-        ("100000000004", "Karthik Rajan", "2003-11-05", "OBC", "Male", "Karnataka", "Polytechnic Diploma in CS", 280000.0, 1),
+        ("100000000004", "Karthik Rajan", "2003-11-05", "OBC", "Male", "Karnataka", "Polytechnic Diploma in CS", 280000.0, 1, "ACTIVE", "INST_KA_03"),
         # Scenario 7: Ghost student candidate (Enrolled, zero attendance scans)
-        ("100000000005", "Suresh Kumar", "2004-07-19", "SC", "Male", "Delhi", "Class XII Science", 180000.0, 1),
+        ("100000000005", "Suresh Kumar", "2004-07-19", "SC", "Male", "Delhi", "Class XII Science", 180000.0, 1, "ACTIVE", "INST_DEL_01"),
         # Scenario 10: Name mismatch on APAAR (Ends with 888)
-        ("100000000888", "Aarav Gupta", "2005-02-28", "General", "Male", "Delhi", "Class XII Science", 500000.0, 1),
+        ("100000000888", "Aarav Gupta", "2005-02-28", "General", "Male", "Delhi", "Class XII Science", 500000.0, 1, "FLAGGED", None),
         # Unverified APAAR ID (Ends with 999)
-        ("100000000999", "Vikram Singh", "2004-12-10", "General", "Male", "Haryana", "Class XII Science", 400000.0, 0),
+        ("100000000999", "Vikram Singh", "2004-12-10", "General", "Male", "Haryana", "Class XII Science", 400000.0, 0, "UNVERIFIED", None),
     ]
 
-    # Fill up to 30 students
+    # Fill up to 30 students (100000000008 is UNENROLLED, along with 100000000009-30)
     for i in range(8, 31):
         apaar = f"1000000000{i:02d}"
         gender = "Female" if i % 2 == 0 else "Male"
         cat = "General" if i % 3 == 0 else ("OBC" if i % 3 == 1 else "SC")
         students.append((
-            apaar, f"Student Test {i}", "2005-01-01", cat, gender, "Delhi", "Class XII", 350000.0 + (i * 10000), 1
+            apaar, f"Student Test {i}", "2005-01-01", cat, gender, "Delhi", "Class XII", 350000.0 + (i * 10000), 1, "UNENROLLED", None
         ))
 
-    cursor.executemany("INSERT INTO students VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", students)
+    cursor.executemany("INSERT INTO students (apaar_id, name, dob, category, gender, domicile, prior_qualification, family_income, consent, enrollment_status, institute_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", students)
+
 
     # 6. Enrollments
     enrollments = [

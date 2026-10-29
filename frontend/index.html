@@ -4,40 +4,36 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#e7e9f4" />
-    <title>APAAR Verify - AICTE Student Gateway</title>
+    <title>My Aapar - AICTE Student Gateway & Identity Portal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      /* Theme: "security paper". Existing slate/blue/emerald/amber/red utility classes are remapped
-         to franking-violet ink, India green, saffron and brick, so every view inherits the palette. */
+      /* Theme: "security paper" + dark obsidian glass. */
       tailwind.config = /*TW*/ {
+        darkMode: 'class',
         theme: {
           extend: {
             fontFamily: {
-              sans: ['Archivo', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+              sans: ['"Plus Jakarta Sans"', 'Archivo', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
             },
-            borderRadius: { DEFAULT: '4px', md: '4px', lg: '6px', xl: '8px', '2xl': '10px' },
+            borderRadius: { DEFAULT: '6px', md: '8px', lg: '10px', xl: '14px', '2xl': '18px', '3xl': '24px' },
             boxShadow: {
-              sm: '0 1px 0 rgba(37,33,95,0.07)',
-              DEFAULT: '0 1px 0 rgba(37,33,95,0.07)',
-              md: '0 2px 0 rgba(37,33,95,0.09)',
-              inner: 'none',
-            },
-            colors: {
-              slate: { 50: '#F6F7FB', 100: '#ECEEF7', 200: '#D6D9EC', 300: '#BFC3DF', 400: '#6E6BA3', 500: '#57548F', 600: '#433F7A', 700: '#34306B', 800: '#29255F', 900: '#1E1A4D', 950: '#14113A' },
-              blue: { 50: '#EEEDFB', 100: '#E0DFF7', 200: '#C6C4EF', 300: '#A3A0E3', 400: '#7E7AD0', 500: '#5A55B8', 600: '#3E3A9A', 700: '#2F2B80', 800: '#25215F', 900: '#1A1745' },
-              emerald: { 50: '#EAF5EE', 100: '#D3EBDC', 200: '#A9D7BD', 300: '#77BC95', 400: '#46A072', 500: '#2A8A5C', 600: '#1E7A4C', 700: '#176540', 800: '#134F34', 900: '#0E3A27' },
-              amber: { 50: '#FDF3E3', 100: '#FBE4BF', 200: '#F6CB85', 300: '#EFAE4A', 400: '#E5921E', 500: '#D17A0C', 600: '#B5650A', 700: '#8F500A', 800: '#6F3F0B', 900: '#4F2D0A' },
-              red: { 50: '#FBECEA', 100: '#F6D5D1', 200: '#EDA9A2', 300: '#E17A70', 400: '#D0503F', 500: '#BC372A', 600: '#A32A1F', 700: '#85231B', 800: '#6B1F18', 900: '#4F1713' },
+              sm: '0 1px 2px rgba(0,0,0,0.05)',
+              DEFAULT: '0 1px 3px rgba(0,0,0,0.1)',
+              md: '0 4px 6px -1px rgba(0,0,0,0.1)',
+              lg: '0 10px 15px -3px rgba(0,0,0,0.1)',
+              xl: '0 20px 25px -5px rgba(0,0,0,0.1)',
+              glass: '0 8px 32px 0 rgba(0, 0, 0, 0.12)',
+              'glass-dark': '0 8px 32px 0 rgba(0, 0, 0, 0.45)',
             },
           },
         },
       } /*TW-END*/;
     </script>
   </head>
-  <body class="text-slate-800">
+  <body class="text-slate-800 dark:text-slate-100 bg-[#f4f6fc] dark:bg-[#090d16] transition-colors duration-200">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

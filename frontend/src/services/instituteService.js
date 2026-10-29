@@ -1,39 +1,86 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { apiFetch } from './apiClient';
 
-const rawApiBase = import.meta.env.VITE_API_BASE || "https://sih-9phl.onrender.com";
-const API_BASE = rawApiBase.replace(/\/+$/, "");
-
-const FALLBACK_INSTITUTES = [
-  { id: "INST_DEL_01", aicte_code: "1-1001", name: "Delhi Engineering & Technology Institute", state: "Delhi" },
-  { id: "INST_UP_02", aicte_code: "1-1002", name: "National Institute of Applied Sciences", state: "Uttar Pradesh" },
-  { id: "INST_KA_03", aicte_code: "1-1003", name: "Bangalore College of Advanced Computing", state: "Karnataka" },
-  { id: "INST_MH_04", aicte_code: "1-1004", name: "Maharashtra Institute of Information Tech", state: "Maharashtra" },
-  { id: "INST_TN_05", aicte_code: "1-1005", name: "Chennai Autonomous Engineering College", state: "Tamil Nadu" },
+export const FALLBACK_INSTITUTES = [
+  { id: "INST_DEL_01", aicte_code: "1-1001", name: "Delhi Engineering & Technology Institute", sanctioned_intake: 120, verified_students: 118, available_seats: 2, state: "Delhi" },
+  { id: "INST_UP_02", aicte_code: "1-1002", name: "National Institute of Applied Sciences", sanctioned_intake: 100, verified_students: 95, available_seats: 5, state: "Uttar Pradesh" },
+  { id: "INST_KA_03", aicte_code: "1-1003", name: "Bangalore College of Advanced Computing", sanctioned_intake: 60, verified_students: 45, available_seats: 15, state: "Karnataka" },
+  { id: "INST_MH_04", aicte_code: "1-1004", name: "Maharashtra Institute of Information Tech", sanctioned_intake: 120, verified_students: 100, available_seats: 20, state: "Maharashtra" },
+  { id: "INST_TN_05", aicte_code: "1-1005", name: "Chennai Autonomous Engineering College", sanctioned_intake: 100, verified_students: 20, available_seats: 80, state: "Tamil Nadu" },
+  { id: "INST_FULL_06", aicte_code: "1-1006", name: "Apex Institute of Advanced Engineering", sanctioned_intake: 50, verified_students: 50, available_seats: 0, state: "Maharashtra" },
 ];
 
 export async function getInstitutes() {
+  let rawList = null;
+
   if (isSupabaseConfigured) {
     try {
       const { data, error } = await supabase
-        .from('institutes')
+        .from('institutions')
         .select('*')
         .order('id');
       if (!error && data && data.length > 0) {
-        return data;
+        rawList = data;
       }
     } catch (e) {
       console.warn("Supabase getInstitutes notice:", e.message);
     }
   }
 
+  if (!rawList) {
+    try {
+      const apiData = await apiFetch('/institutions');
+      if (Array.isArray(apiData) && apiData.length > 0) {
+        rawList = apiData;
+      }
+    } catch {}
+  }
+
+  if (!rawList || rawList.length === 0) {
+    return FALLBACK_INSTITUTES;
+  }
+
+  // Merge with FALLBACK_INSTITUTES so capacity & available seats are guaranteed
+  return rawList.map(inst => {
+    const fallback = FALLBACK_INSTITUTES.find(f => f.id === inst.id) || {};
+    const intake = inst.sanctioned_intake ?? fallback.sanctioned_intake ?? 100;
+    const verified = inst.verified_students ?? fallback.verified_students ?? 0;
+    const avail = inst.available_seats !== undefined
+      ? inst.available_seats
+      : (fallback.available_seats !== undefined ? fallback.available_seats : Math.max(0, intake - verified));
+
+    return {
+      ...fallback,
+      ...inst,
+      sanctioned_intake: intake,
+      verified_students: verified,
+      available_seats: avail,
+      empty_seats: avail,
+      state: inst.state || fallback.state || "National"
+    };
+  });
+}
+
+export async function getInstituteSeats(instId) {
   try {
-    const res = await fetch(`${API_BASE}/institutions`);
-    if (res.ok) {
-      return await res.json();
-    }
+    return await apiFetch(`/institutions/${instId}/seats`);
   } catch {}
 
-  return FALLBACK_INSTITUTES;
+  const inst = FALLBACK_INSTITUTES.find(i => i.id === instId);
+  if (inst) {
+    const empty_seats = Math.max(0, (inst.sanctioned_intake || 0) - (inst.verified_students || 0));
+    return {
+      institute_id: inst.id,
+      aicte_code: inst.aicte_code,
+      name: inst.name,
+      sanctioned_intake: inst.sanctioned_intake,
+      verified_students: inst.verified_students,
+      available_seats: empty_seats,
+      empty_seats: empty_seats,
+      is_full: empty_seats === 0
+    };
+  }
+  return null;
 }
 
 export async function getComplianceOverview() {
@@ -77,8 +124,7 @@ export async function getComplianceOverview() {
   }
 
   try {
-    const res = await fetch(`${API_BASE}/aicte/compliance-overview`);
-    if (res.ok) return await res.json();
+    return await apiFetch('/aicte/compliance-overview');
   } catch {}
 
   return [

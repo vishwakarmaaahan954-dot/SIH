@@ -1,6 +1,6 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import CameraQrScanner, { stopAllCameraStreams } from './components/CameraQrScanner';
 import {
   DEMO_PERSONAS,
   getSession,
@@ -12,13 +12,16 @@ import {
 } from './services/authService';
 import { getStudentProfile, COMPREHENSIVE_STUDENT_DATA } from './services/studentService';
 import { getInstitutes, getComplianceOverview } from './services/instituteService';
-import { getEnrollmentRequests, submitEnrollmentRequest, processEnrollmentRequest } from './services/enrollmentService';
+import { getEnrollmentRequests, submitEnrollmentRequest, processEnrollmentRequest, saveStudentOverride, getStudentOverrides } from './services/enrollmentService';
 import { getAttendanceQR, recordAttendanceScan } from './services/attendanceService';
 import { evaluateSchemes, disburseScholarship } from './services/scholarshipService';
 import { getGrievances, fileGrievance, resolveGrievance } from './services/grievanceService';
 import { getAuditLogs, verifyAuditChain as verifyAuditChainService } from './services/auditService';
 
-const PERSONAS = DEMO_PERSONAS.filter(p => p.role === "Student");
+const STUDENT_PERSONAS = DEMO_PERSONAS.filter(p => p.role === "Student");
+const TEACHER_PERSONAS = DEMO_PERSONAS.filter(p => p.role === "Institute Admin");
+const AICTE_PERSONAS = DEMO_PERSONAS.filter(p => p.role === "AICTE Officer");
+const PERSONAS = STUDENT_PERSONAS;
 
 /* ---------- Presentation helpers (no business logic) ---------- */
 
@@ -61,19 +64,335 @@ const IconLock = () => <svg {...iconProps}><rect x="4" y="9" width="12" height="
 const IconScan = () => <svg {...iconProps}><path d="M3 7V4h3M14 4h3v3M17 13v3h-3M6 16H3v-3M3 10h14" /></svg>;
 const IconRefresh = () => <svg {...iconProps}><path d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5V6h-2.5" /></svg>;
 
-function NavTab({ active, onClick, children }) {
+
+function SidebarContent({
+  role,
+  currentUser,
+  studentDetails,
+  activeTab,
+  switchTab,
+  theme,
+  setTheme,
+  onOpenLogin,
+  onCloseMobile,
+  requestsList,
+  grievancesList,
+  checkEligibility,
+  fetchRequests,
+  fetchCompliance,
+  fetchGrievances,
+  fetchAudit,
+  handleVerifyAuditChain,
+  isMobile,
+  authSession,
+  onOpenScanner
+}) {
+  const studentStatus = studentDetails?.status || currentUser?.status || "ACTIVE";
+  const isUnenrolled = studentStatus === "UNENROLLED";
+
   return (
-    <button onClick={onClick} data-active={active ? "true" : "false"} aria-current={active ? "page" : undefined} className={`nav-tab${active ? " is-active" : ""}`}>
-      {children}
-    </button>
+    <div className="flex flex-col h-full p-4 justify-between select-none">
+      <div className="space-y-4 overflow-y-auto pr-1">
+        {/* Brand & Logo on left + Login Button on right */}
+        <div className="flex items-center justify-between pb-3 border-b border-slate-200/60 dark:border-slate-800/60 gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Guilloche size={34} lines={7} draw check className="flex-shrink-0" />
+            <div className="min-w-0">
+              <h1 className="font-extrabold text-base tracking-tight text-slate-900 dark:text-white leading-tight truncate">
+                My Aapar
+              </h1>
+              <p className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold tracking-wide uppercase truncate">
+                National Portal
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenLogin}
+            title="Open Login Menu"
+            className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm flex items-center gap-1.5 flex-shrink-0 transition active:scale-95"
+          >
+            <IconLock />
+            <span>Login</span>
+          </button>
+        </div>
+
+        {/* Current Active Persona Overview */}
+        <div className="p-3 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/70 dark:border-slate-800/80 shadow-sm space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-500">
+              Active Persona
+            </span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+              role === "Student"
+                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
+                : role === "Institute Admin / Teacher"
+                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300"
+                : "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300"
+            }`}>
+              {role === "Student" ? "🎓 Student" : role === "Institute Admin / Teacher" ? "🏫 Teacher" : "🏛️ AICTE"}
+            </span>
+          </div>
+          <div>
+            <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+              {currentUser?.name || "Active Persona"}
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">
+              {role === "Student"
+                ? `APAAR: ...${String(currentUser?.apaar_id || '').slice(-4)}`
+                : (currentUser?.tag || currentUser?.inst || "AICTE Central HQ")}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenLogin}
+            title="Switch Persona Account"
+            className="w-full py-1.5 px-2 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center justify-center gap-1.5"
+          >
+            <IconLock />
+            <span>Switch Account</span>
+          </button>
+        </div>
+
+        {/* Quick Access Navigation */}
+        <div className="space-y-1">
+          <div className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-1">
+            Navigation
+          </div>
+          <nav className="space-y-1 text-xs">
+            <button
+              type="button"
+              onClick={() => switchTab("dashboard", isMobile ? onCloseMobile : undefined)}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "dashboard" ? "bg-blue-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+            >
+              <span>📊</span>
+              <span>Dashboard</span>
+            </button>
+
+            {role === "Student" && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => switchTab("attendance", isMobile ? onCloseMobile : undefined)}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "attendance" ? "bg-blue-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                >
+                  <span>📱</span>
+                  <span>My Attendance QR</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchTab("schemes", () => { checkEligibility(); if (isMobile) onCloseMobile(); })}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "schemes" ? "bg-blue-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                >
+                  <span>🎓</span>
+                  <span>Scholarship Schemes</span>
+                </button>
+                {isUnenrolled && (
+                  <button
+                    type="button"
+                    onClick={() => switchTab("requests", isMobile ? onCloseMobile : undefined)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "requests" ? "bg-blue-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                  >
+                    <span>📝</span>
+                    <span>Admission & Transfer</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {role === "Institute Admin / Teacher" && (
+              <>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => switchTab("scanner", isMobile ? onCloseMobile : undefined)}
+                    className={`flex-1 flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "scanner" ? "bg-emerald-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                  >
+                    <span>📷</span>
+                    <span>Scan Attendance</span>
+                  </button>
+                  {onOpenScanner && (
+                    <button
+                      type="button"
+                      onClick={() => { onOpenScanner(); if (isMobile) onCloseMobile(); }}
+                      className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition flex-shrink-0"
+                      title="Open Live Camera Scanner"
+                    >
+                      <IconScan />
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => switchTab("institute-requests", () => { fetchRequests(); if (isMobile) onCloseMobile(); })}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "institute-requests" ? "bg-emerald-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                >
+                  <span>📋</span>
+                  <span>Requests ({requestsList.filter(r => r.state === 'SUBMITTED').length})</span>
+                </button>
+              </>
+            )}
+
+            {role === "AICTE Officer" && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => switchTab("compliance", () => { fetchCompliance(); if (isMobile) onCloseMobile(); })}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "compliance" ? "bg-purple-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                >
+                  <span>📡</span>
+                  <span>Compliance Radar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchTab("reconciliation", () => { fetchCompliance(); if (isMobile) onCloseMobile(); })}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "reconciliation" ? "bg-purple-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+                >
+                  <span>🔄</span>
+                  <span>Nightly Drift Check</span>
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => switchTab("grievances", () => { fetchGrievances(); if (isMobile) onCloseMobile(); })}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "grievances" ? "bg-blue-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+            >
+              <span>⚖️</span>
+              <span>Grievances ({grievancesList.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => switchTab("audit", () => { fetchAudit(); handleVerifyAuditChain(); if (isMobile) onCloseMobile(); })}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl font-medium transition ${activeTab === "audit" ? "bg-blue-600 text-white font-bold shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"}`}
+            >
+              <span>🔗</span>
+              <span>Chained Audit Trail</span>
+            </button>
+          </nav>
+        </div>
+      </div>
+
+      {/* Bottom Section: Light & Dark Mode Switcher */}
+      <div className="pt-3 border-t border-slate-200/60 dark:border-slate-800/60 space-y-3">
+       
+        {/* Mode Switcher Button */}
+        <div className="grid grid-cols-2 p-1 bg-slate-200/60 dark:bg-slate-800/80 rounded-xl text-xs font-semibold backdrop-blur-sm border border-slate-300/40 dark:border-slate-700/50">
+          <button
+            type="button"
+            onClick={() => setTheme('light')}
+            className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg transition-all duration-200 ${
+              theme === 'light'
+                ? 'bg-white text-slate-900 shadow-sm font-bold'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+            aria-label="Switch to Light Mode"
+          >
+            <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            <span>Light</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTheme('dark')}
+            className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg transition-all duration-200 ${
+              theme === 'dark'
+                ? 'bg-slate-700 text-white shadow-sm font-bold'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+            aria-label="Switch to Dark Mode"
+          >
+            <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>
+            <span>Dark</span>
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500 px-1 pt-1 font-mono">
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            AICTE Online
+          </span>
+          <span>SIH 2026</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
 export default function App() {
   const [role, setRole] = useState("Student");
   const [selectedApaar, setSelectedApaar] = useState("100000000001");
+  const [selectedTeacherName, setSelectedTeacherName] = useState(TEACHER_PERSONAS[0].name);
+  const [selectedAicteName, setSelectedAicteName] = useState(AICTE_PERSONAS[0].name);
   const [currentUser, setCurrentUser] = useState(PERSONAS[0]);
   const [activeTab, setActiveTab] = useState("dashboard");
+
+  const switchTab = (tabName, extraCallback) => {
+    if (tabName !== "scanner") {
+      stopAllCameraStreams();
+      setIsGlobalScannerOpen(false);
+    }
+    setActiveTab(tabName);
+    if (typeof extraCallback === 'function') {
+      extraCallback();
+    }
+  };
+
+  const [theme, setTheme] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('my-aapar-theme');
+      if (saved === 'dark' || saved === 'light') return saved;
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+      }
+    }
+    return 'dark';
+  });
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    try {
+      localStorage.setItem('my-aapar-theme', theme);
+    } catch {}
+  }, [theme]);
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState("student"); // "student" | "teacher" | "aicte"
+
+  const handleSelectPersona = (p) => {
+    stopAllCameraStreams();
+    setIsGlobalScannerOpen(false);
+    setIdentityMode("persona");
+    if (p.role === "Student") {
+      setRole("Student");
+      setSelectedApaar(p.apaar_id);
+      setCurrentUser(p);
+    } else if (p.role === "Institute Admin") {
+      setRole("Institute Admin / Teacher");
+      setSelectedTeacherName(p.name);
+      setCurrentUser(p);
+      if (p.institute_id) {
+        setScannerInstitute(p.institute_id);
+      }
+    } else if (p.role === "AICTE Officer") {
+      setRole("AICTE Officer");
+      setSelectedAicteName(p.name);
+      setCurrentUser(p);
+    }
+    setActiveTab("dashboard");
+    setIsAuthModalOpen(false);
+    setIsSidebarOpen(false);
+  };
 
   // Identity Mode: "persona" | "supabase"
   const [identityMode, setIdentityMode] = useState("persona");
@@ -113,11 +432,12 @@ export default function App() {
   // Requests state
   const [requestsList, setRequestsList] = useState([]);
   const [institutions, setInstitutions] = useState([
-    { id: "INST_DEL_01", aicte_code: "1-1001", name: "Delhi Engineering & Technology Institute", state: "Delhi" },
-    { id: "INST_UP_02", aicte_code: "1-1002", name: "National Institute of Applied Sciences", state: "Uttar Pradesh" },
-    { id: "INST_KA_03", aicte_code: "1-1003", name: "Bangalore College of Advanced Computing", state: "Karnataka" },
-    { id: "INST_MH_04", aicte_code: "1-1004", name: "Maharashtra Institute of Information Tech", state: "Maharashtra" },
-    { id: "INST_TN_05", aicte_code: "1-1005", name: "Chennai Autonomous Engineering College", state: "Tamil Nadu" },
+    { id: "INST_DEL_01", aicte_code: "1-1001", name: "Delhi Engineering & Technology Institute", sanctioned_intake: 120, verified_students: 118, available_seats: 2, state: "Delhi" },
+    { id: "INST_UP_02", aicte_code: "1-1002", name: "National Institute of Applied Sciences", sanctioned_intake: 100, verified_students: 95, available_seats: 5, state: "Uttar Pradesh" },
+    { id: "INST_KA_03", aicte_code: "1-1003", name: "Bangalore College of Advanced Computing", sanctioned_intake: 60, verified_students: 45, available_seats: 15, state: "Karnataka" },
+    { id: "INST_MH_04", aicte_code: "1-1004", name: "Maharashtra Institute of Information Tech", sanctioned_intake: 120, verified_students: 100, available_seats: 20, state: "Maharashtra" },
+    { id: "INST_TN_05", aicte_code: "1-1005", name: "Chennai Autonomous Engineering College", sanctioned_intake: 100, verified_students: 20, available_seats: 80, state: "Tamil Nadu" },
+    { id: "INST_FULL_06", aicte_code: "1-1006", name: "Apex Institute of Advanced Engineering", sanctioned_intake: 50, verified_students: 50, available_seats: 0, state: "Maharashtra" },
   ]);
   const [joinForm, setJoinForm] = useState({ institute_id: "INST_DEL_01", program: "B.Tech", year: 1, type: "join", target_institute_id: "INST_MH_04" });
   const [requestMsg, setRequestMsg] = useState(null);
@@ -132,13 +452,12 @@ export default function App() {
   const [chainStatus, setChainStatus] = useState(null);
 
   // Scanner Simulator state
-  const [scannerMode, setScannerMode] = useState("quick"); // "quick" | "camera" | "manual"
+  const [scannerMode, setScannerMode] = useState("camera"); // "camera" | "quick" | "manual"
   const [scannerTargetStudent, setScannerTargetStudent] = useState("100000000001");
   const [scannerTokenInput, setScannerTokenInput] = useState("");
-  const [scannerInstitute] = useState("INST_DEL_01");
+  const [scannerInstitute, setScannerInstitute] = useState("INST_DEL_01");
   const [scanResult, setScanResult] = useState(null);
-  const [cameraActive, setCameraActive] = useState(false);
-  const cameraScannerRef = useRef(null);
+  const [isGlobalScannerOpen, setIsGlobalScannerOpen] = useState(false);
 
   // Student Profile Data
   const [studentDetails, setStudentDetails] = useState(COMPREHENSIVE_STUDENT_DATA["100000000001"] || null);
@@ -188,7 +507,7 @@ export default function App() {
       targetApaar = userProfile?.apaar_id || authSession.user.user_metadata?.apaar_id || selectedApaar;
       setCurrentUser({
         apaar_id: targetApaar,
-        name: userProfile?.name || authSession.user.email?.split('@')[0] || "Supabase Verified Student",
+        name: userProfile?.name || authSession.user.email?.split('@')[0] || "Supabase Verified User",
         role: role,
         tag: `Supabase Auth ID: ${authSession.user.id.slice(0, 8)}...`,
         income: "₹4,50,000",
@@ -200,14 +519,63 @@ export default function App() {
         auth_uid: authSession.user.id
       });
     } else {
-      const p = PERSONAS.find(p => p.apaar_id === selectedApaar) || PERSONAS[0];
-      setCurrentUser(p);
-      targetApaar = p.apaar_id;
+      if (role === "Student") {
+        const p = STUDENT_PERSONAS.find(p => p.apaar_id === selectedApaar) || STUDENT_PERSONAS[0];
+        setCurrentUser(p);
+        targetApaar = p.apaar_id;
+      } else if (role === "Institute Admin / Teacher") {
+        const tp = TEACHER_PERSONAS.find(t => t.name === selectedTeacherName) || TEACHER_PERSONAS[0];
+        setCurrentUser(tp);
+        if (tp.institute_id) setScannerInstitute(tp.institute_id);
+      } else if (role === "AICTE Officer") {
+        const ap = AICTE_PERSONAS.find(a => a.name === selectedAicteName) || AICTE_PERSONAS[0];
+        setCurrentUser(ap);
+      }
     }
 
-    // Immediately pre-populate comprehensive baseline profile to avoid 0/empty flash
-    if (COMPREHENSIVE_STUDENT_DATA[targetApaar]) {
-      setStudentDetails(COMPREHENSIVE_STUDENT_DATA[targetApaar]);
+    // Immediately pre-populate comprehensive baseline profile to avoid 0/empty flash for students
+    if (role === "Student") {
+      const overrides = getStudentOverrides();
+      const ov = targetApaar ? overrides[String(targetApaar)] : null;
+
+      if (COMPREHENSIVE_STUDENT_DATA[targetApaar]) {
+        const base = { ...COMPREHENSIVE_STUDENT_DATA[targetApaar] };
+        if (ov) {
+          if (ov.status) base.status = ov.status;
+          if (ov.institute_name) base.institute_name = ov.institute_name;
+          if (ov.institute_id) base.institute_id = ov.institute_id;
+        }
+        setStudentDetails(base);
+        if (ov) {
+          setCurrentUser(prev => ({
+            ...prev,
+            status: ov.status || prev.status,
+            inst: ov.institute_name || ov.institute_id || prev.inst
+          }));
+        }
+      } else {
+        const demo = DEMO_PERSONAS.find(p => p.apaar_id === targetApaar);
+        if (demo) {
+          const effStatus = ov?.status || demo.status;
+          const effInst = ov?.institute_name || ov?.institute_id || demo.inst || 'None';
+          setStudentDetails({
+            apaar_id: demo.apaar_id,
+            name: demo.name,
+            category: demo.cat,
+            gender: demo.gender,
+            institute_name: effInst,
+            status: effStatus,
+            attendance: { attendance_pct: 0, days_present: 0, days_held: 0 }
+          });
+          if (ov) {
+            setCurrentUser(prev => ({
+              ...prev,
+              status: effStatus,
+              inst: effInst
+            }));
+          }
+        }
+      }
     }
 
     // Force clear stale status messages & reset timers
@@ -219,8 +587,8 @@ export default function App() {
     setCountdown(30);
 
     // Force fetch all fresh data for the new persona immediately
-    fetchStudentProfile(targetApaar);
     if (role === "Student") {
+      fetchStudentProfile(targetApaar);
       fetchQRToken(targetApaar);
       checkEligibility(targetApaar);
     } else if (role === "AICTE Officer") {
@@ -229,7 +597,7 @@ export default function App() {
     }
     fetchRequests();
     fetchGrievances();
-  }, [selectedApaar, identityMode, authSession, userProfile, role]);
+  }, [selectedApaar, selectedTeacherName, selectedAicteName, identityMode, authSession, userProfile, role]);
 
   const fetchStudentProfile = async (apaarId) => {
     if (!apaarId) return;
@@ -238,15 +606,17 @@ export default function App() {
       const data = await getStudentProfile(apaarId);
       if (data) {
         setStudentDetails(data);
-        setCurrentUser(prev => ({
-          ...prev,
-          name: data.name || prev.name,
-          status: data.status || prev.status,
-          inst: data.institute_name || data.institute_id || prev.inst,
-          cat: data.category || prev.cat,
-          gender: data.gender || prev.gender,
-          income: data.family_income ? `₹${Number(data.family_income).toLocaleString('en-IN')}` : prev.income
-        }));
+        if (role === "Student") {
+          setCurrentUser(prev => ({
+            ...prev,
+            name: data.name || prev.name,
+            status: data.status || prev.status,
+            inst: data.institute_name || data.institute_id || prev.inst,
+            cat: data.category || prev.cat,
+            gender: data.gender || prev.gender,
+            income: data.family_income ? `₹${Number(data.family_income).toLocaleString('en-IN')}` : prev.income
+          }));
+        }
       }
     } catch (e) {
       console.error("fetchStudentProfile error:", e);
@@ -266,8 +636,7 @@ export default function App() {
 
   const fetchRequests = async () => {
     try {
-      const instId = role === "Institute Admin / Teacher" ? scannerInstitute : null;
-      const data = await getEnrollmentRequests(instId);
+      const data = await getEnrollmentRequests(null);
       setRequestsList(data);
     } catch (e) {
       console.error("fetchRequests error:", e);
@@ -330,29 +699,13 @@ export default function App() {
     fetchAudit();
   }, []);
 
-  // HTML5 Camera Scanner initialization
+  // Turn off camera access whenever switching away from the faculty scanner tab or when switching roles
   useEffect(() => {
-    if (scannerMode === "camera" && cameraActive) {
-      const scanner = new Html5QrcodeScanner(
-        "reader",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        /* verbose= */ false
-      );
-      cameraScannerRef.current = scanner;
-      scanner.render(
-        (decodedText) => {
-          handleExecuteScan(decodedText);
-          scanner.clear();
-          setCameraActive(false);
-        },
-        () => { }
-      );
-      return () => {
-        scanner.clear().catch(console.error);
-      };
+    if (activeTab !== "scanner" || role !== "Institute Admin / Teacher") {
+      setIsGlobalScannerOpen(false);
+      stopAllCameraStreams();
     }
-  }, [scannerMode, cameraActive]);
-
+  }, [role, activeTab]);
   // Check Schemes
   const checkEligibility = async (targetApaar, overrideAttendance) => {
     setIsEvaluatingSchemes(true);
@@ -428,11 +781,34 @@ export default function App() {
 
   const handleExecuteScan = async (tokenToUse) => {
     try {
-      const token = tokenToUse || scannerTokenInput;
+      let token = (tokenToUse || scannerTokenInput || "").trim();
       if (!token) {
-        setScanResult({ status: "REJECTED", reason: "Please provide a signed QR token or use the Instant Scan button" });
+        setScanResult({ status: "REJECTED", reason: "Please provide a signed QR token or use the camera scanner" });
         return;
       }
+
+      // Check if scanned QR is JSON
+      if (token.startsWith("{") && token.endsWith("}")) {
+        try {
+          const parsed = JSON.parse(token);
+          if (parsed.signed_token) token = parsed.signed_token;
+          else if (parsed.token) token = parsed.token;
+          else if (parsed.apaar_id) {
+            return await handleQuickScanStudent(parsed.apaar_id);
+          }
+        } catch {
+          // Non-JSON token, proceed with normal string validation
+        }
+      }
+
+      // Check if scanned QR is a 12-digit student APAAR ID card
+      const cleanDigits = token.replace(/\D/g, "");
+      if (cleanDigits.length === 12 && !token.includes(":")) {
+        setScannerTokenInput(cleanDigits);
+        return await handleQuickScanStudent(cleanDigits);
+      }
+
+      setScannerTokenInput(token);
       const data = await recordAttendanceScan({
         signed_token: token,
         scanner_institute_id: scannerInstitute,
@@ -503,16 +879,43 @@ export default function App() {
 
   const handleCreateRequest = async (e) => {
     e.preventDefault();
+    const targetInst = institutions.find(i => i.id === joinForm.institute_id);
+    const availableSeats = targetInst?.available_seats !== undefined
+      ? targetInst.available_seats
+      : Math.max(0, (targetInst?.sanctioned_intake || 0) - (targetInst?.verified_students || 0));
+    if (availableSeats <= 0) {
+      alert(`Alert: Seats are full! ${targetInst?.name || 'Selected institute'} has 0 available seats.`);
+      return;
+    }
+    const studentApaar = currentUser?.apaar_id || selectedApaar || "100000000008";
+    const toInstId = joinForm.type === "transfer" ? joinForm.target_institute_id : joinForm.institute_id;
+    const fromInstId = joinForm.type === "transfer" ? joinForm.institute_id : null;
+
     try {
       const data = await submitEnrollmentRequest({
-        apaar_id: currentUser.apaar_id,
+        apaar_id: studentApaar,
         institute_id: joinForm.institute_id,
         program: joinForm.program,
         year: parseInt(joinForm.year),
         type: joinForm.type,
         target_institute_id: joinForm.target_institute_id
       });
-      setRequestMsg({ type: "SUCCESS", text: data.message });
+      setRequestMsg({ type: "SUCCESS", text: data.message || "Admission request submitted and sent to institute queue!" });
+
+      const newReqObj = {
+        request_id: data.request_id || `REQ_${Date.now()}`,
+        id: data.request_id || `REQ_${Date.now()}`,
+        apaar_id: studentApaar,
+        to_inst: toInstId,
+        from_inst: fromInstId,
+        state: "SUBMITTED",
+        program: joinForm.program,
+        year: parseInt(joinForm.year),
+        type: joinForm.type,
+        created_at: new Date().toISOString()
+      };
+      setRequestsList(prev => [newReqObj, ...prev.filter(r => (r.request_id || r.id) !== newReqObj.id)]);
+
       fetchRequests();
       fetchAudit();
     } catch (err) {
@@ -523,10 +926,63 @@ export default function App() {
   const handleProcessRequest = async (requestId, action) => {
     try {
       const data = await processEnrollmentRequest({ request_id: requestId, action });
-      alert(`${action} successful: ${data.message}`);
+      if (action === "APPROVE") {
+        const req = requestsList.find(r => (r.request_id || r.id) === requestId);
+        const targetInstId = req?.to_inst || req?.from_inst || scannerInstitute;
+        const targetInstObj = institutions.find(i => i.id === targetInstId);
+
+        // Update in-memory DEMO_PERSONAS record so status transitions to ACTIVE
+        const demoStudent = DEMO_PERSONAS.find(p => p.apaar_id === req?.apaar_id);
+        if (demoStudent) {
+          demoStudent.status = "ACTIVE";
+          demoStudent.inst = targetInstId;
+        }
+
+        // Persist student status override across page refreshes and persona toggles
+        if (req?.apaar_id) {
+          saveStudentOverride(req.apaar_id, {
+            status: "ACTIVE",
+            institute_id: targetInstId,
+            institute_name: targetInstObj?.name || targetInstId
+          });
+        }
+
+        // If currently active student is this persona, update active state immediately
+        if (currentUser?.apaar_id === req?.apaar_id) {
+          setCurrentUser(prev => ({
+            ...prev,
+            status: "ACTIVE",
+            inst: targetInstObj?.name || targetInstId
+          }));
+          setStudentDetails(prev => ({
+            ...prev,
+            status: "ACTIVE",
+            institute_id: targetInstId,
+            institute_name: targetInstObj?.name || targetInstId
+          }));
+        }
+
+        setInstitutions(prev => prev.map(inst => {
+          if (inst.id === targetInstId) {
+            const newVerified = (inst.verified_students || 0) + 1;
+            const newSeats = typeof inst.available_seats === 'number'
+              ? Math.max(0, inst.available_seats - 1)
+              : Math.max(0, (inst.sanctioned_intake || 0) - newVerified);
+            return {
+              ...inst,
+              verified_students: newVerified,
+              available_seats: newSeats
+            };
+          }
+          return inst;
+        }));
+      }
+      alert(`${action} successful: ${data.message || 'Request processed'}`);
       fetchRequests();
       fetchInstitutions();
-      fetchStudentProfile(currentUser.apaar_id);
+      if (currentUser?.apaar_id) {
+        fetchStudentProfile(currentUser.apaar_id);
+      }
       fetchAudit();
     } catch (e) {
       alert(`Action Blocked by Gate: ${e.message}`);
@@ -584,13 +1040,18 @@ export default function App() {
         const { user, profile } = await signIn(authEmail, authPassword);
         setAuthSession({ user });
         setUserProfile(profile);
+        setIdentityMode("supabase");
+        if (profile?.role === 'institute_admin') setRole("Institute Admin / Teacher");
+        else if (profile?.role === 'aicte_officer') setRole("AICTE Officer");
+        else setRole("Student");
         setIsAuthModalOpen(false);
       } else {
+        const targetRole = authModalTab === "teacher" ? "Institute Admin / Teacher" : (authModalTab === "aicte" ? "AICTE Officer" : authSignupRole);
         await signUp({
           email: authEmail,
           password: authPassword,
-          role: authSignupRole,
-          apaar_id: authSignupRole === "Student" ? (authSignupApaar.trim() || null) : null,
+          role: targetRole,
+          apaar_id: targetRole === "Student" ? (authSignupApaar.trim() || null) : null,
           institute_id: authSignupInstitute,
           category: authSignupCategory,
           gender: authSignupGender,
@@ -613,25 +1074,7 @@ export default function App() {
     alert("Signed out from Supabase Auth session.");
   };
 
-  // Slide the ink underline under the active tab.
-  const tabsRef = useRef(null);
-  useLayoutEffect(() => {
-    const place = (scroll) => {
-      const el = tabsRef.current;
-      const a = el && el.querySelector('[data-active="true"]');
-      if (!a) return;
-      el.style.setProperty("--ix", a.offsetLeft + "px");
-      el.style.setProperty("--iw", a.offsetWidth + "px");
-      if (scroll && el.scrollWidth > el.clientWidth) {
-        const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-        el.scrollTo({ left: Math.max(0, a.offsetLeft - (el.clientWidth - a.offsetWidth) / 2), behavior: calm ? "auto" : "smooth" });
-      }
-    };
-    const onResize = () => place(false);
-    place(true);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [activeTab, role, grievancesList.length, requestsList]);
+
 
   // Phones: label each table cell with its column header so rows can render as cards (see table.stack in index.css).
   const mainRef = useRef(null);
@@ -659,6 +1102,24 @@ export default function App() {
 
   const attPct = studentDetails?.attendance?.attendance_pct ?? 0;
 
+  const studentStatus = studentDetails?.status || currentUser?.status || "ACTIVE";
+  const isUnenrolled = studentStatus === "UNENROLLED";
+
+  const selectedInst = institutions.find(i => i.id === joinForm.institute_id) || institutions[0];
+  const selectedInstIntake = selectedInst?.sanctioned_intake || 0;
+  const selectedInstVerified = selectedInst?.verified_students || 0;
+  const selectedInstAvailableSeats = selectedInst?.available_seats !== undefined
+    ? selectedInst.available_seats
+    : Math.max(0, selectedInstIntake - selectedInstVerified);
+
+  const currentInstId = currentUser?.institute_id || scannerInstitute || "INST_DEL_01";
+  const currentInst = institutions.find(i => i.id === currentInstId) || institutions[0];
+  const currentInstIntake = currentInst?.sanctioned_intake || 120;
+  const currentInstVerified = currentInst?.verified_students || 0;
+  const currentInstAvailableSeats = currentInst?.available_seats !== undefined
+    ? currentInst.available_seats
+    : Math.max(0, currentInstIntake - currentInstVerified);
+
   const copyToClipboard = (text) => {
     navigator.clipboard?.writeText(text);
     setCopiedToken(true);
@@ -666,363 +1127,602 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col font-sans text-slate-800">
-      {/* Letterhead */}
-      <header className="letterhead">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-3.5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-          <div className="brand-block flex items-center gap-3 sm:gap-3.5">
-            <Guilloche size={48} lines={7} draw check className="flex-shrink-0" />
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="brand text-lg font-bold text-slate-900 tracking-tight">APAAR Verify</h1>
-                <span className="live-tag">Supabase live</span>
-              </div>
-              <p className="text-xs text-slate-500 font-medium truncate hidden md:block">
-                AICTE Student Verification & Compliance Gateway (SIH 2026)
-              </p>
-            </div>
-          </div>
+    <div className="min-h-screen flex font-sans text-slate-800 dark:text-slate-100 bg-[#f4f6fc] dark:bg-[#090d16] transition-colors duration-200">
+      {/* Desktop Persistent Left Sidebar */}
+      <aside className="hidden lg:flex flex-col w-64 fixed inset-y-0 left-0 z-40 glass-sidebar">
+        <SidebarContent
+          role={role}
+          currentUser={currentUser}
+          studentDetails={studentDetails}
+          activeTab={activeTab}
+          switchTab={switchTab}
+          theme={theme}
+          setTheme={setTheme}
+          onOpenLogin={() => {
+            setAuthModalTab(role === "Institute Admin / Teacher" ? "teacher" : (role === "AICTE Officer" ? "aicte" : "student"));
+            setIsAuthModalOpen(true);
+          }}
+          requestsList={requestsList}
+          grievancesList={grievancesList}
+          checkEligibility={checkEligibility}
+          fetchRequests={fetchRequests}
+          fetchCompliance={fetchCompliance}
+          fetchGrievances={fetchGrievances}
+          fetchAudit={fetchAudit}
+          handleVerifyAuditChain={handleVerifyAuditChain}
+          authSession={authSession}
+          onOpenScanner={() => {
+            setScanResult(null);
+            setIsGlobalScannerOpen(true);
+          }}
+        />
+      </aside>
 
-          {/* Controls: Mode Toggle + Conditional Persona / Supabase Controls */}
-          <div className="session-controls">
-            {/* Mode Switcher: Test Persona vs Supabase Auth ID */}
-            <div className="seg bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
-              <button
-                type="button"
-                onClick={() => setIdentityMode("persona")}
-                className={`flex-1 px-3 py-2 rounded font-semibold transition ${identityMode === "persona" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
-              >
-                Test Persona
-              </button>
-              <button
-                type="button"
-                onClick={() => setIdentityMode("supabase")}
-                className={`flex-1 px-3 py-2 rounded font-semibold transition ${identityMode === "supabase" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
-              >
-                Supabase Auth ID
-              </button>
-            </div>
-
-            {/* ON TEST PERSONA MODE: Inline Active Role & Persona Selects (Login button is HIDDEN) */}
-            {identityMode === "persona" && (
-              <div className="pick">
-                <select
-                  value={role}
-                  onChange={(e) => {
-                    setRole(e.target.value);
-                    setActiveTab("dashboard");
-                  }}
-                  className="text-xs py-1.5 px-2 border border-slate-300 rounded bg-white text-slate-800 font-medium focus:outline-none focus:border-blue-500"
-                  title="Select Active Role"
-                >
-                  <option value="Student">Student</option>
-                  <option value="Institute Admin / Teacher">Institute Admin / Teacher</option>
-                  <option value="AICTE Officer">AICTE Regulator</option>
-                </select>
-
-                {role === "Student" && (
-                  <select
-                    value={selectedApaar}
-                    onChange={(e) => setSelectedApaar(e.target.value)}
-                    className="text-xs py-1.5 px-2 border border-slate-300 rounded bg-white text-slate-800 font-medium max-w-[190px] truncate focus:outline-none focus:border-blue-500"
-                    title="Select Test Persona"
-                  >
-                    {PERSONAS.map(p => (
-                      <option key={p.apaar_id} value={p.apaar_id}>
-                        {p.name} ({p.status})
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            )}
-
-            {/* ON SUPABASE AUTH MODE: Test Persona & Active Role are HIDDEN. Show LOGIN / Session status */}
-            {identityMode === "supabase" && (
-              <div className="auth-slot">
-                {authSession?.user ? (
-                  <div className="flex flex-wrap items-center gap-2 bg-slate-100 border border-slate-300 px-3 py-1.5 rounded text-xs">
-                    <span className="font-semibold text-slate-800 bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px]">
-                      {userProfile?.role ? userProfile.role.toUpperCase().replace('_', ' ') : role}
-                    </span>
-                    <span className="font-medium text-slate-700 truncate max-w-[140px] font-mono" title={authSession.user.email}>
-                      {authSession.user.email}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleSignOut}
-                      className="text-red-600 hover:text-red-800 font-semibold underline text-xs ml-1"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setIsAuthModalOpen(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-4 py-2 rounded shadow-sm flex items-center justify-center gap-1.5 w-full sm:w-auto transition"
-                  >
-                    <IconLock />
-                    <span>LOGIN</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+      {/* Mobile Drawer Left Sidebar */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex">
+          <div
+            className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+          <aside className="relative flex flex-col w-72 max-w-[85vw] h-full glass-sidebar z-10 shadow-2xl">
+            <SidebarContent
+              role={role}
+              currentUser={currentUser}
+              studentDetails={studentDetails}
+              activeTab={activeTab}
+              switchTab={switchTab}
+              theme={theme}
+              setTheme={setTheme}
+              onOpenLogin={() => {
+                setAuthModalTab(role === "Institute Admin / Teacher" ? "teacher" : (role === "AICTE Officer" ? "aicte" : "student"));
+                setIsAuthModalOpen(true);
+                setIsSidebarOpen(false);
+              }}
+              onCloseMobile={() => setIsSidebarOpen(false)}
+              requestsList={requestsList}
+              grievancesList={grievancesList}
+              checkEligibility={checkEligibility}
+              fetchRequests={fetchRequests}
+              fetchCompliance={fetchCompliance}
+              fetchGrievances={fetchGrievances}
+              fetchAudit={fetchAudit}
+              handleVerifyAuditChain={handleVerifyAuditChain}
+              isMobile
+              authSession={authSession}
+              onOpenScanner={() => {
+                setScanResult(null);
+                setIsGlobalScannerOpen(true);
+              }}
+            />
+          </aside>
         </div>
-      </header>
+      )}
+
+      {/* Main App Column */}
+      <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
+        {/* Mobile Floating Sidebar Toggle */}
+        <div className="lg:hidden fixed top-3 left-3 z-30">
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800/80 shadow-md backdrop-blur-md text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 font-bold text-xs transition active:scale-95"
+            aria-label="Open navigation sidebar"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+            <span>Menu</span>
+          </button>
+        </div>
 
       {/* LOGIN Modal */}
       {isAuthModalOpen && (
-        <div className="modal-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
-          <div className="modal-sheet bg-white rounded-t-2xl sm:rounded-xl shadow-2xl border border-slate-200 max-w-md w-full p-5 sm:p-6 space-y-4 max-h-[92vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Guilloche size={32} lines={5} />
-                <h3 className="font-bold text-slate-900 text-base">
-                  {authMode === "signin" ? "LOGIN (Supabase Auth)" : "CREATE ACCOUNT (Supabase Auth)"}
-                </h3>
+        <div className="modal-scrim fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="modal-sheet bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 max-w-2xl w-full p-5 sm:p-6 space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <Guilloche size={32} lines={6} check />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+                    My Aapar Gateway Access
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Choose role, sample instant test personas, or sign in with verified credentials
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => { setIsAuthModalOpen(false); setAuthError(null); }}
-                className="text-slate-400 hover:text-slate-600 font-bold"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white font-bold p-1 text-base leading-none"
               >
                 ✕
               </button>
             </div>
 
-            {/* If already signed in via Supabase */}
-            {authSession?.user ? (
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg space-y-2 text-xs">
-                <div className="font-bold text-emerald-900">Signed In with Supabase Auth</div>
-                <div className="text-slate-700 font-mono text-[11px] break-all">
-                  UID: {authSession.user.id}
+            {/* The 3 Required Tabs: Student, Teacher, AICTE */}
+            <div className="grid grid-cols-3 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => { setAuthModalTab("student"); setAuthSignupRole("Student"); }}
+                className={`py-2 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                  authModalTab === "student"
+                    ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-sm font-bold"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                }`}
+              >
+                <span>🎓</span>
+                <span>Student</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthModalTab("teacher"); setAuthSignupRole("Institute Admin / Teacher"); }}
+                className={`py-2 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                  authModalTab === "teacher"
+                    ? "bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-300 shadow-sm font-bold"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                }`}
+              >
+                <span>🏫</span>
+                <span>Teacher</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthModalTab("aicte"); setAuthSignupRole("AICTE Officer"); }}
+                className={`py-2 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                  authModalTab === "aicte"
+                    ? "bg-white dark:bg-slate-700 text-purple-600 dark:text-purple-300 shadow-sm font-bold"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                }`}
+              >
+                <span>🏛️</span>
+                <span>AICTE</span>
+              </button>
+            </div>
+
+            {/* PART A: TEST PERSONA OPTION FOR EASY SAMPLING */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-amber-500 font-bold">⚡</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    Test Persona Option (Easy Sampling)
+                  </span>
                 </div>
-                <div className="text-slate-700">
-                  Email: <span className="font-semibold">{authSession.user.email}</span>
-                </div>
-                <div className="text-slate-700">
-                  Database Role: <span className="font-semibold uppercase">{userProfile?.role || role}</span>
-                </div>
-                <div className="pt-2 flex justify-between items-center">
-                  <button
-                    type="button"
-                    onClick={handleSignOut}
-                    className="text-red-600 hover:text-red-800 font-bold underline"
-                  >
-                    Sign Out
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsAuthModalOpen(false)}
-                    className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded font-semibold transition"
-                  >
-                    Done
-                  </button>
-                </div>
+                <span className="text-[11px] text-slate-400">1-Click instant test load</span>
               </div>
-            ) : (
-              <>
-                {authError && (
-                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded">
-                    {authError}
-                  </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                {authModalTab === "student" && STUDENT_PERSONAS.map(p => {
+                  const isCurrent = currentUser?.name === p.name && role === "Student";
+                  return (
+                    <div
+                      key={p.apaar_id}
+                      onClick={() => handleSelectPersona(p)}
+                      className={`p-2.5 rounded-xl border transition cursor-pointer group ${
+                        isCurrent
+                          ? "border-blue-600 ring-2 ring-blue-500/30 bg-blue-50/60 dark:bg-blue-900/30"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:border-blue-500 dark:hover:border-blue-400"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 truncate">
+                          {p.name}
+                        </span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          p.status === "ACTIVE"
+                            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+                            : p.status === "FLAGGED"
+                            ? "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300"
+                            : "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300"
+                        }`}>
+                          {p.status}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
+                        {p.tag}
+                      </p>
+                      <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                        <span>APAAR: ...{String(p.apaar_id).slice(-4)}</span>
+                        <span className={`font-semibold ${isCurrent ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-blue-600 dark:text-blue-400 group-hover:underline"}`}>
+                          {isCurrent ? "✓ Active" : "Sample →"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {authModalTab === "teacher" && TEACHER_PERSONAS.map((p, idx) => {
+                  const isCurrent = currentUser?.name === p.name && role === "Institute Admin / Teacher";
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => handleSelectPersona(p)}
+                      className={`p-2.5 rounded-xl border transition cursor-pointer group ${
+                        isCurrent
+                          ? "border-emerald-600 ring-2 ring-emerald-500/30 bg-emerald-50/60 dark:bg-emerald-900/30"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:border-emerald-500 dark:hover:border-emerald-400"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 truncate">
+                          {p.name}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                          Faculty
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
+                        {p.tag}
+                      </p>
+                      <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                        <span className="truncate">{p.inst}</span>
+                        <span className={`font-semibold ${isCurrent ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-emerald-600 dark:text-emerald-400 group-hover:underline"}`}>
+                          {isCurrent ? "✓ Active" : "Sample →"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {authModalTab === "aicte" && AICTE_PERSONAS.map((p, idx) => {
+                  const isCurrent = currentUser?.name === p.name && role === "AICTE Officer";
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => handleSelectPersona(p)}
+                      className={`p-2.5 rounded-xl border transition cursor-pointer group ${
+                        isCurrent
+                          ? "border-purple-600 ring-2 ring-purple-500/30 bg-purple-50/60 dark:bg-purple-900/30"
+                          : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:border-purple-500 dark:hover:border-purple-400"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-slate-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 truncate">
+                          {p.name}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300">
+                          Regulator
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
+                        {p.tag}
+                      </p>
+                      <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                        <span className="truncate">{p.region || "Central HQ"}</span>
+                        <span className={`font-semibold ${isCurrent ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-purple-600 dark:text-purple-400 group-hover:underline"}`}>
+                          {isCurrent ? "✓ Active" : "Sample →"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* PART B: SUPABASE AUTHENTICATION GATEWAY */}
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  {authSession?.user ? "Current Account: " + authSession.user.email : `Account Details (${authModalTab === "student" ? "Student" : authModalTab === "teacher" ? "Faculty" : "AICTE"})`}
+                </span>
+                {!authSession?.user && (
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode(authMode === "signin" ? "signup" : "signin")}
+                    className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    {authMode === "signin" ? "Need an account? Register" : "Already registered? Sign In"}
+                  </button>
                 )}
+              </div>
 
-                <form onSubmit={handleAuthSubmit} className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Email Address</label>
-                    <input
-                      type="email"
-                      required
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      placeholder="e.g. priya.sharma@sih2026.edu"
-                      className="w-full text-xs p-2 border border-slate-300 rounded focus:border-blue-500 focus:outline-none"
-                    />
+              {authSession?.user ? (
+                <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-emerald-900 dark:text-emerald-200">
+                      ✓ Active Session
+                    </span>
+                    <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-emerald-300 dark:border-emerald-700">
+                      {userProfile?.role?.toUpperCase() || role}
+                    </span>
                   </div>
+                  <div className="text-slate-600 dark:text-slate-300 text-[11px] font-mono break-all">
+                    User: <strong>{currentUser.name}</strong>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      className="text-red-600 hover:text-red-700 font-bold underline"
+                    >
+                      Sign Out
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsAuthModalOpen(false)}
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleAuthSubmit} className="space-y-3 text-xs">
+                  {authError && (
+                    <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+                      {authError}
+                    </div>
+                  )}
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Password</label>
-                    <input
-                      type="password"
-                      required
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="w-full text-xs p-2 border border-slate-300 rounded focus:border-blue-500 focus:outline-none"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={authEmail}
+                        onChange={(e) => setAuthEmail(e.target.value)}
+                        placeholder={authModalTab === "student" ? "priya.sharma@sih2026.edu" : authModalTab === "teacher" ? "admin@delhieng.sih2026.edu" : "officer@aicte.sih2026.edu"}
+                        className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                        Password
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                      />
+                    </div>
                   </div>
 
                   {authMode === "signup" && (
                     <>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">12-Digit APAAR ID</label>
-                        <input
-                          type="text"
-                          required
-                          maxLength={12}
-                          value={authSignupApaar}
-                          onChange={(e) => setAuthSignupApaar(e.target.value.replace(/\D/g, ''))}
-                          placeholder="e.g. 100000000009"
-                          className="w-full text-xs p-2 border border-slate-300 rounded font-mono focus:border-blue-500 focus:outline-none"
-                        />
-                      </div>
+                      {authModalTab === "student" && (
+                        <>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                                12-Digit APAAR ID
+                              </label>
+                              <input
+                                type="text"
+                                required
+                                maxLength={12}
+                                value={authSignupApaar}
+                                onChange={(e) => setAuthSignupApaar(e.target.value.replace(/\D/g, ''))}
+                                placeholder="e.g. 100000000009"
+                                className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                                Assigned Institution
+                              </label>
+                              <select
+                                value={authSignupInstitute}
+                                onChange={(e) => setAuthSignupInstitute(e.target.value)}
+                                className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                              >
+                                {institutions.map(inst => (
+                                  <option key={inst.id} value={inst.id}>{inst.name} ({inst.id})</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
 
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Assigned Institute</label>
-                        <select
-                          value={authSignupInstitute}
-                          onChange={(e) => setAuthSignupInstitute(e.target.value)}
-                          className="w-full text-xs p-2 border border-slate-300 rounded focus:border-blue-500 focus:outline-none"
-                        >
-                          {institutions.map(inst => (
-                            <option key={inst.id} value={inst.id}>{inst.name} ({inst.id})</option>
-                          ))}
-                        </select>
-                      </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                                Category
+                              </label>
+                              <select
+                                value={authSignupCategory}
+                                onChange={(e) => setAuthSignupCategory(e.target.value)}
+                                className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                              >
+                                <option value="General">General</option>
+                                <option value="OBC">OBC</option>
+                                <option value="SC">SC</option>
+                                <option value="ST">ST</option>
+                                <option value="EWS">EWS</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                                Gender
+                              </label>
+                              <select
+                                value={authSignupGender}
+                                onChange={(e) => setAuthSignupGender(e.target.value)}
+                                className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                              >
+                                <option value="Female">Female</option>
+                                <option value="Male">Male</option>
+                                <option value="Other">Other</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                                Income (₹/yr)
+                              </label>
+                              <input
+                                type="number"
+                                required
+                                value={authSignupIncome}
+                                onChange={(e) => setAuthSignupIncome(e.target.value)}
+                                placeholder="450000"
+                                className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-mono"
+                              />
+                            </div>
+                          </div>
+                        </>
+                      )}
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-600 mb-1">Category</label>
-                          <select
-                            value={authSignupCategory}
-                            onChange={(e) => setAuthSignupCategory(e.target.value)}
-                            className="w-full text-xs p-2 border border-slate-300 rounded focus:border-blue-500 focus:outline-none"
-                          >
-                            <option value="General">General</option>
-                            <option value="OBC">OBC</option>
-                            <option value="SC">SC</option>
-                            <option value="ST">ST</option>
-                            <option value="EWS">EWS</option>
-                          </select>
+                      {authModalTab === "teacher" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                              Affiliated College
+                            </label>
+                            <select
+                              value={authSignupInstitute}
+                              onChange={(e) => setAuthSignupInstitute(e.target.value)}
+                              className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                            >
+                              {institutions.map(inst => (
+                                <option key={inst.id} value={inst.id}>{inst.name} ({inst.id})</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                              Faculty Role
+                            </label>
+                            <select className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100">
+                              <option>Dean / Principal</option>
+                              <option>Senior Professor & Proctor</option>
+                              <option>Attendance Terminal Operator</option>
+                            </select>
+                          </div>
                         </div>
+                      )}
 
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-600 mb-1">Gender</label>
-                          <select
-                            value={authSignupGender}
-                            onChange={(e) => setAuthSignupGender(e.target.value)}
-                            className="w-full text-xs p-2 border border-slate-300 rounded focus:border-blue-500 focus:outline-none"
-                          >
-                            <option value="Female">Female</option>
-                            <option value="Male">Male</option>
-                            <option value="Other">Other</option>
-                          </select>
+                      {authModalTab === "aicte" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                              Clearance Tier
+                            </label>
+                            <select className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100">
+                              <option>Tier 1: Central Compliance Authority</option>
+                              <option>Tier 2: Regional Inspectorate</option>
+                              <option>Tier 3: Anti-Ghost Taskforce Auditor</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
+                              Jurisdiction
+                            </label>
+                            <select className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100">
+                              <option>AICTE Central HQ New Delhi</option>
+                              <option>Western Regional Bureau (Mumbai)</option>
+                              <option>Southern Regional Bureau (Bangalore)</option>
+                              <option>Northern Regional Bureau (Kanpur)</option>
+                            </select>
+                          </div>
                         </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Annual Family Income (₹)</label>
-                        <input
-                          type="number"
-                          required
-                          min="0"
-                          step="10000"
-                          value={authSignupIncome}
-                          onChange={(e) => setAuthSignupIncome(e.target.value)}
-                          placeholder="e.g. 450000"
-                          className="w-full text-xs p-2 border border-slate-300 rounded focus:border-blue-500 focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Account Role</label>
-                        <select
-                          value={authSignupRole}
-                          onChange={(e) => setAuthSignupRole(e.target.value)}
-                          className="w-full text-xs p-2 border border-slate-300 rounded focus:border-blue-500 focus:outline-none"
-                        >
-                          <option value="Student">Student</option>
-                          <option value="Institute Admin / Teacher">Institute Admin / Teacher</option>
-                          <option value="AICTE Officer">AICTE Regulator Officer</option>
-                        </select>
-                      </div>
+                      )}
                     </>
                   )}
 
-                  <button
-                    type="submit"
-                    disabled={authLoading}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs py-2.5 rounded transition mt-2 flex justify-center items-center"
-                  >
-                    {authLoading ? "Authenticating with Supabase..." : (authMode === "signin" ? "Sign In" : "Register Account")}
-                  </button>
-                </form>
+                  <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-between items-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (authModalTab === "student") {
+                          setAuthEmail("priya.sharma@sih2026.edu");
+                          setAuthPassword("Password123!");
+                        } else if (authModalTab === "teacher") {
+                          setAuthEmail("admin@delhieng.sih2026.edu");
+                          setAuthPassword("Password123!");
+                        } else {
+                          setAuthEmail("officer@aicte.sih2026.edu");
+                          setAuthPassword("Password123!");
+                        }
+                      }}
+                      className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                      Auto-fill Demo Credentials
+                    </button>
 
-                <div className="pt-2 text-center text-xs text-slate-500 border-t border-slate-100 flex justify-between items-center">
-                  <button
-                    type="button"
-                    onClick={() => setAuthMode(authMode === "signin" ? "signup" : "signin")}
-                    className="text-blue-600 hover:underline"
-                  >
-                    {authMode === "signin" ? "Need an account? Register" : "Already registered? Sign In"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (authMode === "signin") {
-                        setAuthEmail("priya.sharma@sih2026.edu");
-                        setAuthPassword("Password123!");
-                      } else {
-                        setAuthEmail("new.student@sih2026.edu");
-                        setAuthPassword("Password123!");
-                        setAuthSignupApaar("100000000009");
-                        setAuthSignupInstitute("INST_DEL_01");
-                        setAuthSignupCategory("General");
-                        setAuthSignupGender("Female");
-                        setAuthSignupIncome("450000");
-                      }
-                    }}
-                    className="text-slate-400 hover:text-slate-600 text-xs"
-                  >
-                    Fill Demo Creds
-                  </button>
-                </div>
-              </>
-            )}
+                    <button
+                      type="submit"
+                      disabled={authLoading}
+                      className="w-full sm:w-auto px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md transition active:scale-95"
+                    >
+                      {authLoading ? "Authenticating..." : authMode === "signin" ? `Sign In as ${authModalTab === "student" ? "Student" : authModalTab === "teacher" ? "Teacher" : "AICTE"}` : "Create Account"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Navigation */}
-      <nav className="tabbar" aria-label="Sections">
-        <div className="max-w-7xl mx-auto px-2 sm:px-5">
-          <div className="tabs" ref={tabsRef}>
-            <NavTab active={activeTab === "dashboard"} onClick={() => setActiveTab("dashboard")}>Dashboard</NavTab>
+      {/* Global Camera QR Scanner Modal: Faculty only */}
+      {isGlobalScannerOpen && role === "Institute Admin / Teacher" && (
+        <div className="modal-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-slate-950/60 backdrop-blur-sm">
+          <div className="modal-sheet bg-white rounded-t-2xl sm:rounded-xl shadow-2xl border border-slate-200 max-w-lg w-full p-5 sm:p-6 space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Guilloche size={32} lines={5} />
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base flex items-center gap-1.5">
+                    <IconScan /> Camera QR Code Scanner
+                  </h3>
+                  <p className="text-xs text-slate-500">Live camera scanner for student rotating attendance tokens & APAAR IDs</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsGlobalScannerOpen(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold p-1 text-lg leading-none"
+              >
+                ✕
+              </button>
+            </div>
 
-            {role === "Student" && (
-              <>
-                <NavTab active={activeTab === "attendance"} onClick={() => setActiveTab("attendance")}>My Attendance QR</NavTab>
-                <NavTab active={activeTab === "schemes"} onClick={() => { setActiveTab("schemes"); checkEligibility(); }}>Scholarship Schemes</NavTab>
-                <NavTab active={activeTab === "requests"} onClick={() => setActiveTab("requests")}>Admission & Transfer Requests</NavTab>
-              </>
+            <CameraQrScanner
+              onScanSuccess={(decodedText) => {
+                handleExecuteScan(decodedText);
+              }}
+            />
+
+            {/* Scan Verdict Box */}
+            {scanResult && (
+              <div className={`p-4 rounded-lg text-xs border ${scanResult.status === "SUCCESS" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-200 text-red-800"}`}>
+                <div className="font-bold text-sm mb-1">
+                  {scanResult.status === "SUCCESS" ? "✓ Attendance Recorded Successfully" : "✗ Attendance Scan Rejected"}
+                </div>
+                <p>{scanResult.message || scanResult.reason || scanResult.detail}</p>
+                {scanResult.student_name && (
+                  <div className="mt-2 font-mono text-[11px] text-slate-600">
+                    Student: {scanResult.student_name} | Date: {scanResult.date}
+                  </div>
+                )}
+              </div>
             )}
 
-            {role === "Institute Admin / Teacher" && (
-              <>
-                <NavTab active={activeTab === "scanner"} onClick={() => setActiveTab("scanner")}>Scan Attendance</NavTab>
-                <NavTab active={activeTab === "institute-requests"} onClick={() => { setActiveTab("institute-requests"); fetchRequests(); }}>Admission Requests Queue ({requestsList.filter(r => r.state === 'SUBMITTED').length})</NavTab>
-              </>
-            )}
-
-            {role === "AICTE Officer" && (
-              <>
-                <NavTab active={activeTab === "compliance"} onClick={() => { setActiveTab("compliance"); fetchCompliance(); }}>Institutional Compliance Radar</NavTab>
-                <NavTab active={activeTab === "reconciliation"} onClick={() => { setActiveTab("reconciliation"); fetchCompliance(); }}>Nightly Reconciliation & Drift</NavTab>
-              </>
-            )}
-
-            <NavTab active={activeTab === "grievances"} onClick={() => { setActiveTab("grievances"); fetchGrievances(); }}>Grievances ({grievancesList.length})</NavTab>
-
-            <NavTab active={activeTab === "audit"} onClick={() => { setActiveTab("audit"); fetchAudit(); handleVerifyAuditChain(); }}>Tamper-Evident Audit Trail</NavTab>
+            <div className="pt-2 flex flex-wrap justify-between items-center gap-2 text-xs">
+              <span className="text-slate-500">
+                Active Terminal: <strong className="font-mono text-slate-700">{scannerInstitute}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsGlobalScannerOpen(false)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded font-semibold transition"
+              >
+                Close Scanner
+              </button>
+            </div>
           </div>
         </div>
-      </nav>
+      )}
+
 
       {/* Main Body Container */}
-      <main ref={mainRef} className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-8 flex-1 w-full">
+      <main ref={mainRef} className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 flex-1 w-full pt-16 lg:pt-8">
         <div key={`${role}-${activeTab}-${currentUser.apaar_id || 'anon'}-${identityMode}-${authSession?.user?.id || 'guest'}`} className="view-enter space-y-6">
 
           {/* 1. STUDENT DASHBOARD */}
@@ -1036,6 +1736,7 @@ export default function App() {
                     <div className="flex flex-wrap items-center gap-4">
                       <h2 className="slip-name text-slate-900">{currentUser.name}</h2>
                       <span className={`stamp-tag${currentUser.status === "ACTIVE" ? " is-ok" : ""}`}>{currentUser.status}</span>
+                      {isLoadingProfile && <span className="text-xs text-blue-600 animate-pulse font-medium">Syncing profile...</span>}
                     </div>
                     <dl className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-4">
                       <div><dt>APAAR ID</dt><dd className="font-mono">XXXXXXXX{String(currentUser?.apaar_id || '').slice(-4)}</dd></div>
@@ -1157,18 +1858,18 @@ export default function App() {
                 <div className="relative p-5 sm:p-6 md:p-8 grid gap-6 md:grid-cols-[1fr_auto] items-start">
                   <div>
                     <div className="flex flex-wrap items-center gap-4">
-                      <h2 className="slip-name text-slate-900">Dr. Arvind Mehta</h2>
-                      <span className="stamp-tag is-ok">ACTIVE ACCREDITATION</span>
+                      <h2 className="slip-name text-slate-900 dark:text-white">{currentUser?.name || "Dr. Arvind Mehta"}</h2>
+                      <span className="stamp-tag is-ok">{currentUser?.status === "ACTIVE" ? "ACTIVE ACCREDITATION" : (currentUser?.status || "ACTIVE ACCREDITATION")}</span>
                     </div>
                     <dl className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-4">
-                      <div><dt>Institute</dt><dd>Delhi Engineering & Tech</dd></div>
-                      <div><dt>AICTE Code</dt><dd className="font-mono">1-1001</dd></div>
-                      <div><dt>Role / Designation</dt><dd>Dean / Principal</dd></div>
-                      <div><dt>State / Region</dt><dd>Delhi (North-Western)</dd></div>
-                      <div><dt>Sanctioned Intake</dt><dd className="num">120 Seats</dd></div>
-                      <div><dt>Verified Intake</dt><dd className="num text-emerald-700">118 Students (98.3%)</dd></div>
-                      <div><dt>Faculty Strength</dt><dd className="num">8 FTE (14.75:1 Ratio)</dd></div>
-                      <div><dt>Compliance State</dt><dd className="text-emerald-700 font-semibold">Fully Compliant</dd></div>
+                      <div><dt>Institute</dt><dd>{institutions.find(i => i.id === (currentUser?.institute_id || scannerInstitute))?.name || currentUser?.inst || "Delhi Engineering & Tech"}</dd></div>
+                      <div><dt>AICTE Code</dt><dd className="font-mono">{institutions.find(i => i.id === (currentUser?.institute_id || scannerInstitute))?.aicte_code || "1-1001"}</dd></div>
+                      <div><dt>Role / Designation</dt><dd>{currentUser?.designation || "Dean / Principal"}</dd></div>
+                      <div><dt>Department</dt><dd>{currentUser?.department || "Computer Science"}</dd></div>
+                      <div><dt>Sanctioned Intake</dt><dd className="num">{currentInstIntake} Seats</dd></div>
+                      <div><dt>Verified Intake</dt><dd className="num text-emerald-700">{currentInstVerified} Students ({((currentInstVerified / (currentInstIntake || 1)) * 100).toFixed(1)}%)</dd></div>
+                      <div><dt>Faculty Strength</dt><dd className="num">{currentInst?.faculty_strength || 8} FTE ({currentInst?.student_faculty_ratio || '14.8'}:1 Ratio)</dd></div>
+                      <div><dt>Compliance State</dt><dd className="text-emerald-700 font-semibold">{currentInst?.compliance_status || "Fully Compliant"}</dd></div>
                     </dl>
                   </div>
                   <div className="flex md:flex-col items-center gap-3 self-center">
@@ -1181,9 +1882,9 @@ export default function App() {
               <section className="ledger" aria-label="Institute quick metrics">
                 <div className="ledger-cell has-gauge">
                   <div className="ledger-label">Capacity Utilization</div>
-                  <div className="ledger-num">98.3<small>%</small></div>
+                  <div className="ledger-num">{((currentInstVerified / (currentInstIntake || 1)) * 100).toFixed(1)}<small>%</small></div>
                   <div className="gauge">
-                    <div className="gauge-fill" style={{ width: "98.3%", background: "var(--green)" }} />
+                    <div className="gauge-fill" style={{ width: `${Math.min(100, (currentInstVerified / (currentInstIntake || 1)) * 100)}%`, background: "var(--green)" }} />
                     <span className="gauge-cut" />
                   </div>
                 </div>
@@ -1193,7 +1894,7 @@ export default function App() {
                 </div>
                 <div className="ledger-cell">
                   <div className="ledger-label">Faculty-Student Ratio</div>
-                  <div className="ledger-num is-word is-ok">14.8:1<small>≤ 20:1 required</small></div>
+                  <div className="ledger-num is-word is-ok">{currentInst?.student_faculty_ratio || '14.8'}:1<small>≤ 20:1 required</small></div>
                 </div>
               </section>
 
@@ -1206,7 +1907,7 @@ export default function App() {
                     Scan and cryptographically record student attendance via live rotating QR codes. Prevents proxy and ghost attendance fraud.
                   </p>
                   <button
-                    onClick={() => setActiveTab("scanner")}
+                    onClick={() => switchTab("scanner")}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center gap-2"
                   >
                     Open Attendance Scanner →
@@ -1221,7 +1922,7 @@ export default function App() {
                     Verify prior qualifications and approve direct admission, lateral entry, or inter-college transfer applications.
                   </p>
                   <button
-                    onClick={() => { setActiveTab("institute-requests"); fetchRequests(); }}
+                    onClick={() => switchTab("institute-requests", () => fetchRequests())}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold transition flex items-center gap-2"
                   >
                     Review Admission Queue ({requestsList.filter(r => r.state === 'SUBMITTED').length}) →
@@ -1239,14 +1940,14 @@ export default function App() {
                 <div className="relative p-5 sm:p-6 md:p-8 grid gap-6 md:grid-cols-[1fr_auto] items-start">
                   <div>
                     <div className="flex flex-wrap items-center gap-4">
-                      <h2 className="slip-name text-slate-900">Prof. S. R. Raman</h2>
-                      <span className="stamp-tag is-ok">CENTRAL REGULATOR</span>
+                      <h2 className="slip-name text-slate-900 dark:text-white">{currentUser?.name || "Prof. S. R. Raman"}</h2>
+                      <span className="stamp-tag is-ok">{currentUser?.clearance ? "AUTHORIZED CLEARANCE" : "CENTRAL REGULATOR"}</span>
                     </div>
                     <dl className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-4">
-                      <div><dt>Bureau</dt><dd>Central Regulatory Wing</dd></div>
-                      <div><dt>Designation</dt><dd>Chief Compliance Officer</dd></div>
-                      <div><dt>Headquarters</dt><dd>AICTE New Delhi</dd></div>
-                      <div><dt>Jurisdiction</dt><dd>All-India Technical Ed</dd></div>
+                      <div><dt>Bureau</dt><dd>{currentUser?.inst || "AICTE HQ New Delhi"}</dd></div>
+                      <div><dt>Designation</dt><dd>{currentUser?.clearance || "Chief Compliance Officer"}</dd></div>
+                      <div><dt>Headquarters</dt><dd>AICTE Central New Delhi</dd></div>
+                      <div><dt>Jurisdiction</dt><dd>{currentUser?.region || "National Central HQ"}</dd></div>
                       <div><dt>Monitored Institutes</dt><dd className="num">5 Institutions</dd></div>
                       <div><dt>Total Intake Monitored</dt><dd className="num">500 Sanctioned</dd></div>
                       <div><dt>Compliance Flags</dt><dd className="num text-red-600">2 Breaches Detected</dd></div>
@@ -1288,7 +1989,7 @@ export default function App() {
                     Inspect sanctioned intake versus verified enrollment, faculty ratio violations, and severe seat under-filling.
                   </p>
                   <button
-                    onClick={() => { setActiveTab("compliance"); fetchCompliance(); }}
+                    onClick={() => switchTab("compliance", () => fetchCompliance())}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center gap-2"
                   >
                     Open Compliance Radar →
@@ -1303,7 +2004,7 @@ export default function App() {
                     Cross-verify atomic ledger counters between college registers and APAAR verified identity rolls.
                   </p>
                   <button
-                    onClick={() => { setActiveTab("reconciliation"); fetchCompliance(); }}
+                    onClick={() => switchTab("reconciliation", () => fetchCompliance())}
                     className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition flex items-center gap-2"
                   >
                     Run State Reconciliation →
@@ -1568,97 +2269,146 @@ export default function App() {
 
           {/* 4. ADMISSION & TRANSFER REQUESTS */}
           {role === "Student" && activeTab === "requests" && (
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
-                <h3 className="font-bold text-slate-900 text-sm">Submit New Application</h3>
-                {requestMsg && (
-                  <div className={`p-3 text-xs rounded border ${requestMsg.type === "SUCCESS" ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-red-50 text-red-800 border-red-200"}`}>
-                    {requestMsg.text}
-                  </div>
-                )}
-                <form onSubmit={handleCreateRequest} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block font-semibold text-slate-600 mb-1">Request Type</label>
-                    <select
-                      value={joinForm.type}
-                      onChange={(e) => setJoinForm({ ...joinForm, type: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded"
-                    >
-                      <option value="join">Fresh Admission (Year 1)</option>
-                      <option value="lateral">Lateral Entry (Direct Year 2 - Diploma)</option>
-                      <option value="transfer">Inter-College Transfer (Carryover ABC Credits)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-slate-600 mb-1">Target Institute</label>
-                    <select
-                      value={joinForm.institute_id}
-                      onChange={(e) => setJoinForm({ ...joinForm, institute_id: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded"
-                    >
-                      {institutions.map(inst => (
-                        <option key={inst.id} value={inst.id}>{inst.name} ({inst.state})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {joinForm.type === "transfer" && (
-                    <div>
-                      <label className="block font-semibold text-slate-600 mb-1">Destination Transfer Institute</label>
-                      <select
-                        value={joinForm.target_institute_id}
-                        onChange={(e) => setJoinForm({ ...joinForm, target_institute_id: e.target.value })}
-                        className="w-full p-2 border border-slate-300 rounded"
-                      >
-                        {institutions.map(inst => (
-                          <option key={inst.id} value={inst.id}>{inst.name} ({inst.state})</option>
-                        ))}
-                      </select>
+            isUnenrolled ? (
+              <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+                <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
+                  <h3 className="font-bold text-slate-900 text-sm">Submit New Application</h3>
+                  {requestMsg && (
+                    <div className={`p-3 text-xs rounded border ${requestMsg.type === "SUCCESS" ? "bg-emerald-50 text-emerald-800 border-emerald-200" : "bg-red-50 text-red-800 border-red-200"}`}>
+                      {requestMsg.text}
                     </div>
                   )}
 
-                  <button
-                    type="submit"
-                    className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-semibold transition"
-                  >
-                    Submit Application
-                  </button>
-                </form>
-              </div>
+                  {/* Real-time Seat Capacity Alert / Badge */}
+                  {selectedInstAvailableSeats <= 0 ? (
+                    <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-lg text-xs font-semibold flex items-center gap-2" role="alert">
+                      <span>⚠️</span>
+                      <span>Alert: Seats are full! {selectedInst?.name || "Selected institute"} has 0 available seats.</span>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-xs flex items-center justify-between">
+                      <span className="font-medium">Seat Capacity Status:</span>
+                      <span className="font-bold font-mono text-emerald-700">{selectedInstAvailableSeats} seats open (Sanctioned: {selectedInstIntake})</span>
+                    </div>
+                  )}
 
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6">
-                <h3 className="font-bold text-slate-900 text-sm mb-4">My Application & Transfer History</h3>
-                <div className="overflow-x-auto">
-                  <table className="stack w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                      <tr>
-                        <th className="p-3">Request ID</th>
-                        <th className="p-3">Type</th>
-                        <th className="p-3">Institute</th>
-                        <th className="p-3">Status</th>
-                        <th className="p-3">Timestamp</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {requestsList.filter(r => r.apaar_id === currentUser.apaar_id).map((req) => (
-                        <tr key={req.request_id || req.id} className="hover:bg-slate-50">
-                          <td className="p-3 font-mono text-slate-400">{req.request_id || req.id}</td>
-                          <td className="p-3 font-semibold uppercase">{req.type}</td>
-                          <td className="p-3 text-slate-600">{req.to_inst || req.from_inst}</td>
-                          <td className="p-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${req.state === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' : (req.state === 'REJECTED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800')}`}>
-                              {req.state}
-                            </span>
-                          </td>
-                          <td className="p-3 font-mono text-slate-400">{req.created_at?.slice(0, 10)}</td>
+                  <form onSubmit={handleCreateRequest} className="space-y-3 text-xs">
+                    <div>
+                      <label className="block font-semibold text-slate-600 mb-1">Request Type</label>
+                      <select
+                        value={joinForm.type}
+                        onChange={(e) => setJoinForm({ ...joinForm, type: e.target.value })}
+                        className="w-full p-2 border border-slate-300 rounded"
+                      >
+                        <option value="join">Fresh Admission (Year 1)</option>
+                        <option value="lateral">Lateral Entry (Direct Year 2 - Diploma)</option>
+                        <option value="transfer">Inter-College Transfer (Carryover ABC Credits)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-slate-600 mb-1">Target Institute</label>
+                      <select
+                        value={joinForm.institute_id}
+                        onChange={(e) => setJoinForm({ ...joinForm, institute_id: e.target.value })}
+                        className="w-full p-2 border border-slate-300 rounded"
+                      >
+                        {institutions.map(inst => (
+                          <option key={inst.id} value={inst.id}>
+                            {inst.name} ({inst.state})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {joinForm.type === "transfer" && (
+                      <div>
+                        <label className="block font-semibold text-slate-600 mb-1">Destination Transfer Institute</label>
+                        <select
+                          value={joinForm.target_institute_id}
+                          onChange={(e) => setJoinForm({ ...joinForm, target_institute_id: e.target.value })}
+                          className="w-full p-2 border border-slate-300 rounded"
+                        >
+                          {institutions.map(inst => (
+                            <option key={inst.id} value={inst.id}>{inst.name} ({inst.state})</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={selectedInstAvailableSeats <= 0}
+                      className={`w-full py-2 rounded font-semibold transition ${
+                        selectedInstAvailableSeats <= 0
+                          ? "bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300"
+                          : "bg-blue-600 hover:bg-blue-700 text-white"
+                      }`}
+                    >
+                      Submit Application
+                    </button>
+                  </form>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6">
+                  <h3 className="font-bold text-slate-900 text-sm mb-4">My Application & Transfer History</h3>
+                  <div className="overflow-x-auto">
+                    <table className="stack w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                        <tr>
+                          <th className="p-3">Request ID</th>
+                          <th className="p-3">Type</th>
+                          <th className="p-3">Institute</th>
+                          <th className="p-3">Status</th>
+                          <th className="p-3">Timestamp</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {requestsList.filter(r => String(r.apaar_id) === String(currentUser?.apaar_id || selectedApaar || "100000000008")).map((req) => (
+                          <tr key={req.request_id || req.id} className="hover:bg-slate-50">
+                            <td className="p-3 font-mono text-slate-400">{req.request_id || req.id}</td>
+                            <td className="p-3 font-semibold uppercase">{req.type}</td>
+                            <td className="p-3 text-slate-600 font-medium">
+                              {institutions.find(i => i.id === (req.to_inst || req.from_inst))?.name || req.to_inst || req.from_inst}
+                            </td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${req.state === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' : (req.state === 'REJECTED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800')}`}>
+                                {req.state}
+                              </span>
+                            </td>
+                            <td className="p-3 font-mono text-slate-400">{req.created_at?.slice(0, 10)}</td>
+                          </tr>
+                        ))}
+                        {requestsList.filter(r => String(r.apaar_id) === String(currentUser?.apaar_id || selectedApaar || "100000000008")).length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="p-4 text-center text-slate-400 italic">
+                              No application history recorded yet. Choose an institution and submit your request above.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-4">
+                <div className="text-4xl">🎓</div>
+                <h3 className="font-bold text-slate-900 text-lg">Active Institutional Enrollment</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                  Your enrollment status is currently <span className="font-bold text-emerald-600 uppercase px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200">{studentStatus}</span> at <strong className="text-slate-800">{studentDetails?.institute_name || currentUser?.inst || "your affiliated institute"}</strong>.
+                  Fresh admission is only available for unenrolled applicants. You can access your verified attendance QR, academic credits, and scholarship schemes from the navigation sidebar.
+                </p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => switchTab("dashboard")}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+                  >
+                    Go to Student Dashboard →
+                  </button>
+                </div>
+              </div>
+            )
           )}
 
           {/* 5. INSTITUTE ATTENDANCE SCANNER */}
@@ -1681,19 +2431,25 @@ export default function App() {
                 {/* Mode Selector */}
                 <div className="flex gap-2 p-1 bg-slate-100 rounded-lg text-xs">
                   <button
-                    onClick={() => setScannerMode("quick")}
+                    onClick={() => setScannerMode("camera")}
+                    className={`flex-1 py-1.5 rounded font-semibold transition ${scannerMode === "camera" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
+                  >
+                    📷 Camera Scanner
+                  </button>
+                  <button
+                    onClick={() => {
+                      stopAllCameraStreams();
+                      setScannerMode("quick");
+                    }}
                     className={`flex-1 py-1.5 rounded font-semibold transition ${scannerMode === "quick" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
                   >
                     Instant Persona Test
                   </button>
                   <button
-                    onClick={() => { setScannerMode("camera"); setCameraActive(true); }}
-                    className={`flex-1 py-1.5 rounded font-semibold transition ${scannerMode === "camera" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
-                  >
-                    Webcam Scanner
-                  </button>
-                  <button
-                    onClick={() => setScannerMode("manual")}
+                    onClick={() => {
+                      stopAllCameraStreams();
+                      setScannerMode("manual");
+                    }}
                     className={`flex-1 py-1.5 rounded font-semibold transition ${scannerMode === "manual" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
                   >
                     Raw Token Input
@@ -1701,6 +2457,16 @@ export default function App() {
                 </div>
 
                 {/* Scanner mode view */}
+                {scannerMode === "camera" && (
+                  <div className="space-y-3 pt-2">
+                    <CameraQrScanner
+                      onScanSuccess={(decodedText) => {
+                        handleExecuteScan(decodedText);
+                      }}
+                    />
+                  </div>
+                )}
+
                 {scannerMode === "quick" && (
                   <div className="space-y-3 pt-2">
                     <label className="block text-xs font-semibold text-slate-600">Select Student to Scan</label>
@@ -1724,11 +2490,6 @@ export default function App() {
                   </div>
                 )}
 
-                {scannerMode === "camera" && (
-                  <div className="space-y-3 pt-2">
-                    <div id="reader" className="w-full overflow-hidden rounded border border-slate-200"></div>
-                  </div>
-                )}
 
                 {scannerMode === "manual" && (
                   <div className="space-y-3 pt-2">
@@ -1768,68 +2529,135 @@ export default function App() {
 
           {/* 6. INSTITUTE ADMISSION REQUESTS QUEUE */}
           {role === "Institute Admin / Teacher" && activeTab === "institute-requests" && (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
-              <div className="flex flex-wrap justify-between items-center gap-3 border-b border-slate-100 pb-3">
+            <div className="space-y-6">
+              {/* Dynamic Institutional Capacity Header */}
+              <div className="p-4 sm:p-5 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Admission & Verification Queue</h3>
-                  <p className="text-xs text-slate-500">Reconciles student join claims against institutional sanctioned intake and faculty ratio.</p>
+                  <h3 className="font-bold text-slate-900 text-base">{currentInst?.name || "Institute Portal"}</h3>
+                  <p className="text-xs text-slate-500 font-mono">AICTE Code: {currentInst?.aicte_code || "1-1001"} | Terminal: {currentInstId}</p>
                 </div>
-                <button
-                  onClick={fetchRequests}
-                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded font-semibold transition"
-                >
-                  Refresh Queue
-                </button>
+                <div className="flex items-center gap-4 text-xs">
+                  <div className="text-right">
+                    <div className="text-slate-400">Sanctioned Intake</div>
+                    <div className="font-bold font-mono text-slate-800 text-sm">{currentInstIntake}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-slate-400">Verified Enrolled</div>
+                    <div className="font-bold font-mono text-emerald-700 text-sm">{currentInstVerified}</div>
+                  </div>
+                  <div className="text-right border-l pl-4 border-slate-200">
+                    <div className="text-slate-400">Available Empty Seats</div>
+                    <div className={`font-bold font-mono text-base ${currentInstAvailableSeats > 0 ? "text-blue-700" : "text-red-600 font-extrabold"}`}>
+                      {currentInstAvailableSeats}
+                    </div>
+                  </div>
+                  <div>
+                    {currentInstAvailableSeats > 0 ? (
+                      <span className="px-2.5 py-1 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        SEATS AVAILABLE
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 rounded text-[11px] font-bold bg-red-100 text-red-800 border border-red-200">
+                        SEATS FULL
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="stack w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                    <tr>
-                      <th className="p-3">Request ID</th>
-                      <th className="p-3">APAAR ID</th>
-                      <th className="p-3">Type</th>
-                      <th className="p-3">Program / Year</th>
-                      <th className="p-3">Current State</th>
-                      <th className="p-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {requestsList.map((req) => (
-                      <tr key={req.request_id || req.id} className="hover:bg-slate-50">
-                        <td className="p-3 font-mono text-slate-400">{req.request_id || req.id}</td>
-                        <td className="p-3 font-mono font-bold text-slate-800">{req.apaar_id}</td>
-                        <td className="p-3 uppercase font-semibold text-blue-700">{req.type}</td>
-                        <td className="p-3 text-slate-600">B.Tech Year {req.year || 1}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${req.state === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' : (req.state === 'REJECTED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800')}`}>
-                            {req.state}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right space-x-2">
-                          {req.state === "SUBMITTED" ? (
-                            <>
-                              <button
-                                onClick={() => handleProcessRequest(req.request_id || req.id, "APPROVE")}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold transition"
-                              >
-                                Accept & Verify
-                              </button>
-                              <button
-                                onClick={() => handleProcessRequest(req.request_id || req.id, "REJECT")}
-                                className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-semibold transition"
-                              >
-                                Reject
-                              </button>
-                            </>
-                          ) : (
-                            <span className="text-slate-400 italic text-[11px]">Processed</span>
-                          )}
-                        </td>
+              {/* Admission & Verification Queue Table */}
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6 space-y-4">
+                <div className="flex flex-wrap justify-between items-center gap-3 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Admission & Verification Queue</h3>
+                    <p className="text-xs text-slate-500">Reconciles student join claims against institutional sanctioned intake and faculty ratio.</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-slate-500">
+                      Pending: <strong>{requestsList.filter(r => r.state === 'SUBMITTED').length}</strong>
+                    </span>
+                    <button
+                      onClick={fetchRequests}
+                      className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded font-semibold transition"
+                    >
+                      Refresh Queue
+                    </button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="stack w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                      <tr>
+                        <th className="p-3">Request ID</th>
+                        <th className="p-3">APAAR ID</th>
+                        <th className="p-3">Type</th>
+                        <th className="p-3">Program / Year</th>
+                        <th className="p-3">Target Institute</th>
+                        <th className="p-3">Current State</th>
+                        <th className="p-3 text-right">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {requestsList.map((req) => {
+                        const reqInstId = req.to_inst || req.from_inst || currentInstId;
+                        const reqInst = institutions.find(i => i.id === reqInstId);
+                        const reqAvailableSeats = req.institute_available_seats !== undefined
+                          ? req.institute_available_seats
+                          : (reqInst ? (reqInst.available_seats !== undefined ? reqInst.available_seats : Math.max(0, (reqInst.sanctioned_intake || 0) - (reqInst.verified_students || 0))) : currentInstAvailableSeats);
+                        const isAcceptDisabled = (req.can_accept === false) || (reqAvailableSeats <= 0);
+
+                        return (
+                          <tr key={req.request_id || req.id} className="hover:bg-slate-50">
+                            <td className="p-3 font-mono text-slate-400">{req.request_id || req.id}</td>
+                            <td className="p-3 font-mono font-bold text-slate-800">{req.apaar_id}</td>
+                            <td className="p-3 uppercase font-semibold text-blue-700">{req.type}</td>
+                            <td className="p-3 text-slate-600">B.Tech Year {req.year || 1}</td>
+                            <td className="p-3">
+                              <div className="font-semibold text-slate-800 dark:text-slate-100">
+                                {reqInst?.name || reqInstId}
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono">
+                                Code: {reqInst?.aicte_code || reqInstId} • Available: {reqAvailableSeats} seats
+                              </div>
+                            </td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${req.state === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' : (req.state === 'REJECTED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800')}`}>
+                                {req.state}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right space-x-2">
+                              {req.state === "SUBMITTED" ? (
+                                <>
+                                  <button
+                                    onClick={() => handleProcessRequest(req.request_id || req.id, "APPROVE")}
+                                    disabled={isAcceptDisabled}
+                                    title={isAcceptDisabled ? "Acceptance disabled: Seats are full (0 empty seats)" : "Accept and enroll student"}
+                                    className={`px-2.5 py-1 rounded text-[11px] font-semibold transition ${
+                                      !isAcceptDisabled
+                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+                                        : "bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300"
+                                    }`}
+                                  >
+                                    Accept & Verify
+                                  </button>
+                                  <button
+                                    onClick={() => handleProcessRequest(req.request_id || req.id, "REJECT")}
+                                    className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-semibold transition"
+                                  >
+                                    Reject
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-slate-400 italic text-[11px]">Processed</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -2109,9 +2937,10 @@ export default function App() {
       </main>
 
       {/* Mandatory Regulatory Common Footer */}
-      <footer className="colophon py-5 text-center text-xs text-slate-500">
-        Mock integrations: APAAR, ABC, DigiLocker, NSP
+      <footer className="colophon py-5 text-center text-xs text-slate-500 dark:text-slate-400">
+        My Aapar &bull; AICTE Student Verification & Compliance Gateway &bull; SIH 2026
       </footer>
     </div>
+  </div>
   );
 }

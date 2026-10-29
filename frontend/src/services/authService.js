@@ -9,8 +9,12 @@ export const DEMO_PERSONAS = [
   { apaar_id: "100000000008", name: "Student Test 08", role: "Student", tag: "New Applicant (No Active College)", income: "₹4,30,000", cat: "General", gender: "Female", inst: "None", status: "UNENROLLED", email: "student08@sih2026.edu" },
   { apaar_id: "100000000888", name: "Aarav Gupta", role: "Student", tag: "Name/DOB Mismatch Flagged", income: "₹5,00,000", cat: "General", gender: "Male", inst: "None", status: "FLAGGED", email: "aarav.gupta@sih2026.edu" },
   { apaar_id: "100000000999", name: "Vikram Singh", role: "Student", tag: "Suspended / Unverified APAAR", income: "₹4,00,000", cat: "General", gender: "Male", inst: "None", status: "UNVERIFIED", email: "vikram.singh@sih2026.edu" },
-  { apaar_id: null, name: "Dr. Arvind Mehta", role: "Institute Admin", tag: "Delhi Engineering & Tech", institute_id: "INST_DEL_01", inst: "INST_DEL_01", status: "ACTIVE", email: "admin@delhieng.sih2026.edu" },
-  { apaar_id: null, name: "Prof. S. R. Raman", role: "AICTE Officer", tag: "Central Compliance Officer", institute_id: null, inst: "AICTE HQ", status: "ACTIVE", email: "officer@aicte.sih2026.edu" },
+  { apaar_id: null, name: "Dr. Arvind Mehta", role: "Institute Admin", tag: "Delhi Engineering & Tech (HOD)", institute_id: "INST_DEL_01", inst: "INST_DEL_01", status: "ACTIVE", email: "admin@delhieng.sih2026.edu", department: "Computer Science", designation: "Head of Institute" },
+  { apaar_id: null, name: "Prof. Rajesh Nair", role: "Institute Admin", tag: "Bangalore College (Faculty Scanner)", institute_id: "INST_KA_03", inst: "INST_KA_03", status: "ACTIVE", email: "rajesh.nair@bangalore.sih2026.edu", department: "Information Tech", designation: "Senior Professor" },
+  { apaar_id: null, name: "Dr. Sunita Deshmukh", role: "Institute Admin", tag: "Maharashtra IT (Proctor)", institute_id: "INST_MH_04", inst: "INST_MH_04", status: "ACTIVE", email: "sunita.d@maharashtra.sih2026.edu", department: "Electronics", designation: "Academic Proctor" },
+  { apaar_id: null, name: "Prof. S. R. Raman", role: "AICTE Officer", tag: "Central Compliance Officer", institute_id: null, inst: "AICTE HQ New Delhi", status: "ACTIVE", email: "officer@aicte.sih2026.edu", region: "National Central HQ", clearance: "Level 3 - Central Authority" },
+  { apaar_id: null, name: "Dr. Neha Sen", role: "AICTE Officer", tag: "Regional Compliance Auditor", institute_id: null, inst: "AICTE Western Bureau", status: "ACTIVE", email: "neha.sen@aicte.sih2026.edu", region: "Western Region", clearance: "Level 2 - Regional Inspector" },
+  { apaar_id: null, name: "Director K. Venkat", role: "AICTE Officer", tag: "National Anti-Ghost Taskforce", institute_id: null, inst: "AICTE National Oversight", status: "ACTIVE", email: "k.venkat@aicte.sih2026.edu", region: "National Audit Cell", clearance: "Level 3 - Chief Vigilance" },
 ];
 
 /**

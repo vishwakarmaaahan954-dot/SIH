@@ -1,5 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase.js';
 import { DEMO_PERSONAS } from './authService.js';
+import { apiFetch } from './apiClient.js';
+import { getStudentOverrides } from './enrollmentService.js';
 
 export const COMPREHENSIVE_STUDENT_DATA = {
   "100000000001": {
@@ -308,18 +310,69 @@ export async function getStudentProfile(apaarId) {
     }
   }
 
-  // 2. High-fidelity Comprehensive Persona Fallback
+  // 2. Try FastAPI Backend
+  try {
+    const apiData = await apiFetch(`/students/${apaarId}`);
+    if (apiData && apiData.student) {
+      const st = apiData.student;
+      const activeEnr = apiData.enrollments?.find(e => e.status === 'ACTIVE') || apiData.enrollments?.[0];
+      const fallback = COMPREHENSIVE_STUDENT_DATA[apaarId] || {};
+      const status = st.enrollment_status || activeEnr?.status || fallback.status || 'UNENROLLED';
+      const instName = activeEnr?.institute_name || fallback.institute_name || 'Unenrolled';
+
+      const res = {
+        apaar_id: st.apaar_id,
+        name: st.name,
+        dob: st.dob,
+        category: st.category,
+        gender: st.gender,
+        domicile: st.domicile,
+        prior_qualification: st.prior_qualification,
+        family_income: st.family_income,
+        consent: Boolean(st.consent),
+        is_identity_verified: status !== 'FLAGGED' && status !== 'UNVERIFIED',
+        institute_id: activeEnr?.institute_id || st.institute_id || fallback.institute_id || 'None',
+        institute_name: instName,
+        program: activeEnr?.program || fallback.program || 'B.Tech Technical Program',
+        year: activeEnr?.year || fallback.year || 1,
+        enrollment: activeEnr || fallback.enrollment || null,
+        status: status,
+        attendance: apiData.attendance_summaries?.[0] || fallback.attendance || { days_present: 0, days_held: 0, attendance_pct: 0 },
+        credits: (apiData.credits && apiData.credits.length > 0) ? apiData.credits : (fallback.credits || []),
+        results: (apiData.results && apiData.results.length > 0) ? apiData.results : (fallback.results || []),
+        _source: 'fastapi'
+      };
+      const overrides = getStudentOverrides();
+      const ov = overrides[String(apaarId)];
+      if (ov) {
+        if (ov.status) res.status = ov.status;
+        if (ov.institute_id) res.institute_id = ov.institute_id;
+        if (ov.institute_name) res.institute_name = ov.institute_name;
+      }
+      return res;
+    }
+  } catch {}
+
+  // 3. High-fidelity Comprehensive Persona Fallback
   if (COMPREHENSIVE_STUDENT_DATA[apaarId]) {
-    return {
+    const res = {
       ...COMPREHENSIVE_STUDENT_DATA[apaarId],
       _source: 'comprehensive_fallback'
     };
+    const overrides = getStudentOverrides();
+    const ov = overrides[String(apaarId)];
+    if (ov) {
+      if (ov.status) res.status = ov.status;
+      if (ov.institute_id) res.institute_id = ov.institute_id;
+      if (ov.institute_name) res.institute_name = ov.institute_name;
+    }
+    return res;
   }
 
   // 4. Generic synthetic demo persona fallback
   const demo = DEMO_PERSONAS.find(p => p.apaar_id === apaarId);
   if (demo) {
-    return {
+    const res = {
       apaar_id: demo.apaar_id,
       name: demo.name,
       dob: "2005-01-01",
@@ -340,6 +393,14 @@ export async function getStudentProfile(apaarId) {
       results: [],
       _source: 'local_persona'
     };
+    const overrides = getStudentOverrides();
+    const ov = overrides[String(apaarId)];
+    if (ov) {
+      if (ov.status) res.status = ov.status;
+      if (ov.institute_id) res.institute_id = ov.institute_id;
+      if (ov.institute_name) res.institute_name = ov.institute_name;
+    }
+    return res;
   }
 
   return null;
